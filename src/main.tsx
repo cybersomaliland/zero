@@ -9,6 +9,11 @@ ReactDOM.createRoot(document.getElementById("app")!).render(
   </React.StrictMode>,
 );
 
+window.setTimeout(() => {
+  const splash = document.getElementById("zero-splash");
+  if (splash) splash.classList.add("hide");
+}, 450);
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     await navigator.serviceWorker.register("/sw.js");

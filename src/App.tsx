@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { askFinanceAssistant, calcSafeToSpend, forecast, generateAiAdvice, generateInsights, getUpcomingBills, money } from "./logic";
 import { useZeroStore } from "./store";
-import type { SubscriptionCycle, TxType } from "./types";
+import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
 const tabs = ["Home", "Transactions", "Subscriptions", "Insights", "Settings"] as const;
 type Tab = (typeof tabs)[number];
@@ -19,11 +19,13 @@ const tabMeta: Record<Tab, { icon: string; label: string }> = {
 const categories = ["Food & Drink", "Transport", "Subscriptions", "Shopping", "Housing", "Health", "Income", "General"];
 
 function App() {
-  const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSettings, clearData } = useZeroStore();
+  const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData } = useZeroStore();
   const [tab, setTab] = useState<Tab>("Home");
   const [showTx, setShowTx] = useState(false);
   const [showSub, setShowSub] = useState(false);
+  const [showBulkTx, setShowBulkTx] = useState(false);
   const [editingTx, setEditingTx] = useState<any | null>(null);
+  const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
@@ -49,6 +51,19 @@ function App() {
         return acc;
       }, {});
   }, [transactions]);
+
+  const refreshApp = async () => {
+    if ("serviceWorker" in navigator) {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) {
+        await registration.update();
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      }
+    }
+    window.location.reload();
+  };
 
   if (loading || !settings) return <div className="screen"><div className="skeleton large" /><div className="skeleton" /><div className="skeleton" /></div>;
 
@@ -104,7 +119,13 @@ function App() {
 
         {tab === "Transactions" && (
           <section className="card">
-            <div className="row"><h3>Transactions</h3><button onClick={() => setShowTx(true)}>Add</button></div>
+            <div className="row">
+              <h3>Transactions</h3>
+              <div className="inline-actions">
+                <button onClick={() => setShowBulkTx(true)}>Bulk add</button>
+                <button onClick={() => setShowTx(true)}>Add</button>
+              </div>
+            </div>
             {transactions.map((t) => <TransactionRow key={t.id} tx={t} onDelete={() => deleteTransaction(t.id!)} onEdit={() => { setEditingTx(t); setShowTx(true); }} />)}
           </section>
         )}
@@ -112,7 +133,19 @@ function App() {
         {tab === "Subscriptions" && (
           <section className="card">
             <div className="row"><h3>Subscriptions</h3><button onClick={() => setShowSub(true)}>Add</button></div>
-            {upcoming.map((s) => <UrgencyRow key={s.id} label={s.name} amount={s.amount} date={s.dueDate} urgency={s.urgency} />)}
+            {upcoming.map((s) => (
+              <SubscriptionRow
+                key={s.id}
+                label={s.name}
+                amount={s.amount}
+                date={s.dueDate}
+                urgency={s.urgency}
+                onEdit={() => {
+                  setEditingSub(subscriptions.find((x) => x.id === s.id) ?? null);
+                  setShowSub(true);
+                }}
+              />
+            ))}
           </section>
         )}
 
@@ -151,6 +184,7 @@ function App() {
             <h3>Settings</h3>
             <label>Current balance <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
             <label>Reserved savings <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+            <button type="button" onClick={() => { void refreshApp(); }}>Refresh app</button>
             <button
               className="danger-btn"
               type="button"
@@ -188,7 +222,27 @@ function App() {
             }}
           />
         )}
-        {showSub && <SubscriptionSheet onClose={() => setShowSub(false)} onSave={async (payload) => { await addSubscription(payload); setShowSub(false); }} />}
+        {showSub && (
+          <SubscriptionSheet
+            initial={editingSub ?? undefined}
+            onClose={() => { setShowSub(false); setEditingSub(null); }}
+            onSave={async (payload) => {
+              if (editingSub?.id) await updateSubscription(editingSub.id, payload);
+              else await addSubscription(payload);
+              setShowSub(false);
+              setEditingSub(null);
+            }}
+          />
+        )}
+        {showBulkTx && (
+          <BulkTransactionSheet
+            onClose={() => setShowBulkTx(false)}
+            onSave={async (rows) => {
+              await addTransactionsBulk(rows);
+              setShowBulkTx(false);
+            }}
+          />
+        )}
       </AnimatePresence>
 
       <button className="ai-fab" type="button" onClick={() => setAssistantOpen((v) => !v)}>
@@ -287,11 +341,14 @@ function TransactionRow({ tx, onDelete, onEdit }: { tx: any; onDelete: () => voi
   );
 }
 
-function UrgencyRow({ label, amount, date, urgency }: { label: string; amount: number; date: string; urgency: string }) {
+function SubscriptionRow({ label, amount, date, urgency, onEdit }: { label: string; amount: number; date: string; urgency: string; onEdit: () => void }) {
   return (
     <div className={`urgency ${urgency}`}>
       <div><strong>{label}</strong><p>{formatDistanceToNow(parseISO(date), { addSuffix: true })}</p></div>
-      <strong>{money(amount)}</strong>
+      <div className="inline-actions">
+        <strong>{money(amount)}</strong>
+        <button type="button" className="ghost-btn" onClick={onEdit}>Edit</button>
+      </div>
     </div>
   );
 }
@@ -318,20 +375,86 @@ function TransactionSheet({ initial, onClose, onSave }: { initial?: any; onClose
   );
 }
 
-function SubscriptionSheet({ onClose, onSave }: { onClose: () => void; onSave: (p: { name: string; amount: number; cycle: SubscriptionCycle; nextBillingDate: string }) => Promise<void> }) {
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [cycle, setCycle] = useState<SubscriptionCycle>("monthly");
-  const [nextBillingDate, setNextBillingDate] = useState(format(new Date(), "yyyy-MM-dd"));
+function SubscriptionSheet({ initial, onClose, onSave }: { initial?: Subscription; onClose: () => void; onSave: (p: { name: string; amount: number; cycle: SubscriptionCycle; nextBillingDate: string }) => Promise<void> }) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [cycle, setCycle] = useState<SubscriptionCycle>(initial?.cycle ?? "monthly");
+  const [nextBillingDate, setNextBillingDate] = useState(initial ? format(parseISO(initial.nextBillingDate), "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"));
   return (
     <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => { e.preventDefault(); onSave({ name, amount: Number(amount), cycle, nextBillingDate: new Date(nextBillingDate).toISOString() }); }}>
-        <h3>Add subscription</h3>
+        <h3>{initial ? "Edit subscription" : "Add subscription"}</h3>
         <label>Name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
         <label>Amount<input value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>
         <label>Cycle<select value={cycle} onChange={(e) => setCycle(e.target.value as SubscriptionCycle)}><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
         <label>Next billing<input type="date" value={nextBillingDate} onChange={(e) => setNextBillingDate(e.target.value)} /></label>
         <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>
+      </motion.form>
+    </motion.div>
+  );
+}
+
+function BulkTransactionSheet({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (rows: Array<{ amount: number; type: TxType; category?: string; note?: string; date: string }>) => Promise<void>;
+}) {
+  const [content, setContent] = useState("");
+  const [error, setError] = useState("");
+
+  const parseRows = () => {
+    const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
+    const parsed = lines.map((line, idx) => {
+      const [amountRaw, typeRaw, categoryRaw, noteRaw, dateRaw] = line.split(",").map((x) => x?.trim());
+      const amount = Number(amountRaw);
+      const type = (typeRaw?.toLowerCase() ?? "") as TxType;
+      const validType = type === "expense" || type === "income";
+      const date = dateRaw ? new Date(dateRaw) : new Date();
+      if (!Number.isFinite(amount) || !validType || Number.isNaN(date.getTime())) {
+        throw new Error(`Line ${idx + 1} is invalid. Format: amount,type,category,note,YYYY-MM-DD`);
+      }
+      return {
+        amount,
+        type,
+        category: categoryRaw || undefined,
+        note: noteRaw || undefined,
+        date: date.toISOString(),
+      };
+    });
+    return parsed;
+  };
+
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.form
+        className="sheet"
+        initial={{ y: 280 }}
+        animate={{ y: 0 }}
+        exit={{ y: 300 }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            const rows = parseRows();
+            await onSave(rows);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Invalid bulk input.");
+          }
+        }}
+      >
+        <h3>Bulk add transactions</h3>
+        <p className="muted">One line each: amount,type,category,note,date</p>
+        <textarea
+          className="bulk-input"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder={"-5.5,expense,Food & Drink,Coffee,2026-05-05\n2200,income,Income,Salary,2026-05-01"}
+          rows={7}
+          required
+        />
+        {error && <p className="error-text">{error}</p>}
+        <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save all</button></div>
       </motion.form>
     </motion.div>
   );

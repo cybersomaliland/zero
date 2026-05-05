@@ -7,8 +7,52 @@
     <meta name="theme-color" content="#0A84FF" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zero</title>
+    <style>
+      #zero-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 30% 20%, #e8f2ff 0%, #f2f4f8 45%, #eef1f6 100%);
+        transition: opacity 0.35s ease;
+      }
+      #zero-splash.hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .zero-splash-card {
+        width: 92px;
+        height: 92px;
+        border-radius: 24px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(145deg, #0a84ff, #005ad1);
+        box-shadow: 0 16px 34px rgba(10, 132, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+      .zero-splash-ring {
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        border: 8px solid rgba(255, 255, 255, 0.95);
+        border-left-color: rgba(255, 255, 255, 0.32);
+      }
+      .zero-splash-title {
+        margin-top: 18px;
+        font-family: "SF Pro Display", "Inter", "Segoe UI", sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #111317;
+      }
+    </style>
   </head>
   <body>
+    <div id="zero-splash" aria-hidden="true">
+      <div>
+        <div class="zero-splash-card"><div class="zero-splash-ring"></div></div>
+        <div class="zero-splash-title">Zero</div>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

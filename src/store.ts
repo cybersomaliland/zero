@@ -14,6 +14,8 @@ type State = {
   updateTransaction: (id: number, t: Partial<Transaction>) => Promise<void>;
   deleteTransaction: (id: number) => Promise<void>;
   addSubscription: (s: Omit<Subscription, "id" | "createdAt">) => Promise<void>;
+  updateSubscription: (id: number, s: Partial<Subscription>) => Promise<void>;
+  addTransactionsBulk: (rows: Array<Omit<Transaction, "id" | "createdAt" | "category"> & { category?: string }>) => Promise<void>;
   updateSettings: (s: Partial<Settings>) => Promise<void>;
   learnRule: (keyword: string, category: string) => Promise<void>;
   clearData: () => Promise<void>;
@@ -59,6 +61,28 @@ export const useZeroStore = create<State>((set, get) => ({
   },
   addSubscription: async (s) => {
     await db.subscriptions.add({ ...s, createdAt: new Date().toISOString() });
+    await get().init();
+  },
+  updateSubscription: async (id, s) => {
+    await db.subscriptions.update(id, s);
+    await get().init();
+  },
+  addTransactionsBulk: async (rows) => {
+    const { rules } = get();
+    const prepared = rows.map((t) => {
+      const inferred = inferCategory(`${t.note ?? ""} ${t.type}`, rules);
+      return {
+        amount: t.amount,
+        type: t.type,
+        category: t.category || inferred || (t.type === "income" ? "Income" : "General"),
+        note: t.note,
+        date: t.date,
+        createdAt: new Date().toISOString(),
+      } as Omit<Transaction, "id">;
+    });
+    if (prepared.length > 0) {
+      await db.transactions.bulkAdd(prepared);
+    }
     await get().init();
   },
   updateSettings: async (s) => {
