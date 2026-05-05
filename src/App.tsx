@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { format, formatDistanceToNow, isSameWeek, parseISO } from "date-fns";
+import { eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfMonth } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { askFinanceAssistant, forecast, generateAiAdvice, generateInsights, getUpcomingBills, money } from "./logic";
+import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
@@ -50,6 +50,20 @@ function App() {
         }, 0),
     [transactions],
   );
+  const weeklySpent = useMemo(
+    () =>
+      transactions
+        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }) && tx.type === "expense")
+        .reduce((acc, tx) => acc + Math.abs(tx.amount), 0),
+    [transactions],
+  );
+  const weeklyIncome = useMemo(
+    () =>
+      transactions
+        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }) && tx.type === "income")
+        .reduce((acc, tx) => acc + Math.abs(tx.amount), 0),
+    [transactions],
+  );
   const weeklyUpcomingSubs = useMemo(
     () => getUpcomingBills(subscriptions, 7).reduce((acc, sub) => acc + sub.amount, 0),
     [subscriptions],
@@ -75,23 +89,57 @@ function App() {
   const weeklyRealBalance = weeklySalaryAllocation + weeklyTransactionsNet - weeklyUpcomingSubs - weeklySavingsReserve;
   const monthlyRealBalance = monthlySalary + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
   const weeklySafeToUse = Math.max(0, weeklyRealBalance);
-  const insights = useMemo(() => generateInsights(transactions, subscriptions), [transactions, subscriptions]);
+  const daysLeftInWeek = Math.max(1, 7 - (new Date().getDay() === 0 ? 7 : new Date().getDay()) + 1);
+  const safePerDay = weeklySafeToUse / daysLeftInWeek;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
     () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: monthlySalary }) : []),
     [transactions, subscriptions, settings, monthlySalary],
   );
   const aiAdvice = useMemo(() => generateAiAdvice(transactions, subscriptions), [transactions, subscriptions]);
-  const monthlyExpensesByCategory = useMemo(() => {
-    const monthKey = format(new Date(), "yyyy-MM");
-    return transactions
-      .filter((t) => t.type === "expense" && format(parseISO(t.date), "yyyy-MM") === monthKey)
-      .reduce<Record<string, number>>((acc, t) => {
-        acc[t.category] = (acc[t.category] || 0) + Math.abs(t.amount);
+  const spendingCalendar = useMemo(() => {
+    const now = new Date();
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
+    const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    const spendByDay = transactions
+      .filter((tx) => tx.type === "expense" && format(parseISO(tx.date), "yyyy-MM") === format(now, "yyyy-MM"))
+      .reduce<Record<string, number>>((acc, tx) => {
+        const key = format(parseISO(tx.date), "yyyy-MM-dd");
+        acc[key] = (acc[key] || 0) + Math.abs(tx.amount);
         return acc;
       }, {});
-  }, [transactions]);
 
+    const blanks = Array.from({ length: getDay(monthStart) }, (_, i) => ({
+      key: `blank-${i}`,
+      blank: true as const,
+    }));
+    const cells = days.map((d) => {
+      const key = format(d, "yyyy-MM-dd");
+      return {
+        key,
+        blank: false as const,
+        day: format(d, "d"),
+        amount: spendByDay[key] || 0,
+        today: key === format(now, "yyyy-MM-dd"),
+      };
+    });
+    return [...blanks, ...cells];
+  }, [transactions]);
+  const streakDays = useMemo(() => {
+    const txDays = new Set(
+      transactions.map((tx) => format(parseISO(tx.date), "yyyy-MM-dd")),
+    );
+    let streak = 0;
+    const cursor = new Date();
+    while (true) {
+      const key = format(cursor, "yyyy-MM-dd");
+      if (!txDays.has(key)) break;
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return streak;
+  }, [transactions]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -166,15 +214,47 @@ function App() {
     <div className="app-shell">
       <header className="top">
         <div>
-          <p className="muted">Hello</p>
-          <h1>Zero</h1>
+          <p className="muted">Consistency streak</p>
+          <div className="streak-wrap">
+            <motion.span
+              className="streak-icon"
+              animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+              aria-hidden="true"
+            >
+              🔥
+            </motion.span>
+            <motion.h1
+              key={streakDays}
+              initial={{ opacity: 0.4, y: 6, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: "spring", stiffness: 250, damping: 16 }}
+            >
+              {streakDays} day{streakDays === 1 ? "" : "s"}
+            </motion.h1>
+          </div>
         </div>
         <p className="muted">{format(new Date(), "EEEE, MMM d")}</p>
       </header>
 
       <main className="content">
         {tab === "Home" && (
-          <>
+          <div className="home-layout">
+            <section className="home-intro">
+              <div>
+                <p className="home-kicker">Weekly money overview</p>
+                <h2 className="home-title">Plan your week with clarity</h2>
+              </div>
+              <div className="home-pills">
+                <span>Salary set</span>
+                <span>Live tracking</span>
+              </div>
+            </section>
+
+            <div className="home-section-head">
+              <h3>Top numbers</h3>
+              <p className="muted">Updated with every transaction</p>
+            </div>
             <section className="card main-card">
               <p className="muted">Weekly Safe to Use</p>
               <h2>{money(weeklySafeToUse)}</h2>
@@ -196,36 +276,65 @@ function App() {
                 <span>Savings -{money(monthlySavingsReserve)}</span>
               </div>
             </section>
+
+            <div className="home-section-head">
+              <h3>Weekly progress</h3>
+              <p className="muted">Soft guidance, no strict warnings</p>
+            </div>
             <section className="card">
-              <h3>Spending plan</h3>
-              {Object.entries(settings.monthlyTargets).length === 0 && (
-                <p className="muted">Set monthly targets in settings to see progress.</p>
-              )}
-              {Object.entries(settings.monthlyTargets).map(([category, target]) => {
-                const spent = monthlyExpensesByCategory[category] || 0;
-                const progress = Math.min(100, target > 0 ? (spent / target) * 100 : 0);
-                return (
-                  <div className="plan-row" key={category}>
-                    <div className="row">
-                      <strong>{category}</strong>
-                      <span className="muted">{money(spent)} / {money(target)}</span>
-                    </div>
-                    <div className="plan-track">
-                      <div className={`plan-fill ${progress >= 90 ? "warn" : ""}`} style={{ width: `${progress}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+              <h3>Weekly money map</h3>
+              <div className="snapshot-grid">
+                <article><p className="muted">Spent this week</p><strong>{money(weeklySpent)}</strong></article>
+                <article><p className="muted">Income this week</p><strong>{money(weeklyIncome)}</strong></article>
+                <article><p className="muted">Bills due this week</p><strong>{money(weeklyUpcomingSubs)}</strong></article>
+              </div>
+              <div className="plan-row">
+                <div className="row">
+                  <strong>Safe per day ({daysLeftInWeek} day(s) left)</strong>
+                  <span className="muted">{money(safePerDay)}</span>
+                </div>
+                <div className="plan-track">
+                  <div
+                    className={`plan-fill ${safePerDay < 10 ? "warn" : ""}`}
+                    style={{ width: `${Math.min(100, Math.max(10, (safePerDay / Math.max(1, weeklySalaryAllocation / 7)) * 100))}%` }}
+                  />
+                </div>
+              </div>
             </section>
+
+            <div className="home-section-head">
+              <h3>Recent activity</h3>
+              <p className="muted">Swipe to edit or delete</p>
+            </div>
             <section className="card">
               <h3>Recent transactions</h3>
               {transactions.slice(0, 5).map((t) => <TransactionRow key={t.id} tx={t} onDelete={() => deleteTransaction(t.id!)} onEdit={() => { setEditingTx(t); setShowTx(true); }} />)}
             </section>
+
+            <div className="home-section-head">
+              <h3>Spending calendar</h3>
+              <p className="muted">{format(new Date(), "MMMM yyyy")}</p>
+            </div>
             <section className="card">
-              <h3>Gentle insights</h3>
-              {insights.map((i) => <p key={i} className="insight">{i}</p>)}
+              <div className="calendar-weekdays">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((w) => <span key={w}>{w}</span>)}
+              </div>
+              <div className="calendar-grid">
+                {spendingCalendar.map((cell) =>
+                  cell.blank ? (
+                    <div key={cell.key} className="calendar-cell blank" />
+                  ) : (
+                    <div key={cell.key} className={`calendar-cell ${cell.today ? "today" : ""}`}>
+                      <span className="day">{cell.day}</span>
+                      <span className={`amt ${cell.amount > 0 ? "spent" : ""}`}>
+                        {cell.amount > 0 ? money(cell.amount) : "-"}
+                      </span>
+                    </div>
+                  ),
+                )}
+              </div>
             </section>
-          </>
+          </div>
         )}
 
         {tab === "Transactions" && (

@@ -12,7 +12,7 @@ ReactDOM.createRoot(document.getElementById("app")!).render(
 window.setTimeout(() => {
   const splash = document.getElementById("zero-splash");
   if (splash) splash.classList.add("hide");
-}, 450);
+}, 900);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {

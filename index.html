@@ -8,14 +8,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zero</title>
     <style>
+      @keyframes splashFloat {
+        0%, 100% { transform: translateY(0px) scale(1); }
+        50% { transform: translateY(-4px) scale(1.02); }
+      }
+      @keyframes splashPulse {
+        0% { box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.3); }
+        100% { box-shadow: 0 0 0 22px rgba(10, 132, 255, 0); }
+      }
+      @keyframes ringSpin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
       #zero-splash {
         position: fixed;
         inset: 0;
         z-index: 9999;
         display: grid;
         place-items: center;
-        background: radial-gradient(circle at 30% 20%, #e8f2ff 0%, #f2f4f8 45%, #eef1f6 100%);
-        transition: opacity 0.35s ease;
+        background:
+          radial-gradient(circle at 24% 16%, #ffffffaa 0%, #ffffff00 40%),
+          radial-gradient(circle at 74% 88%, #c6dcff66 0%, #ffffff00 45%),
+          linear-gradient(180deg, #f6f8fc 0%, #eef2f8 100%);
+        transition: opacity 0.45s ease;
       }
       #zero-splash.hide {
         opacity: 0;
@@ -29,6 +44,7 @@
         place-items: center;
         background: linear-gradient(145deg, #0a84ff, #005ad1);
         box-shadow: 0 16px 34px rgba(10, 132, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        animation: splashFloat 2.2s ease-in-out infinite;
       }
       .zero-splash-ring {
         width: 48px;
@@ -36,6 +52,14 @@
         border-radius: 999px;
         border: 8px solid rgba(255, 255, 255, 0.95);
         border-left-color: rgba(255, 255, 255, 0.32);
+        animation: ringSpin 1.2s linear infinite;
+      }
+      .zero-splash-pulse {
+        position: absolute;
+        width: 96px;
+        height: 96px;
+        border-radius: 26px;
+        animation: splashPulse 1.5s ease-out infinite;
       }
       .zero-splash-title {
         margin-top: 18px;
@@ -49,7 +73,10 @@
   <body>
     <div id="zero-splash" aria-hidden="true">
       <div>
-        <div class="zero-splash-card"><div class="zero-splash-ring"></div></div>
+        <div style="position: relative; display:grid; place-items:center;">
+          <div class="zero-splash-pulse"></div>
+          <div class="zero-splash-card"><div class="zero-splash-ring"></div></div>
+        </div>
         <div class="zero-splash-title">Zero</div>
       </div>
     </div>
