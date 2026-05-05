@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { format, formatDistanceToNow, parseISO } from "date-fns";
+import { format, formatDistanceToNow, isSameWeek, parseISO } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { askFinanceAssistant, calcSafeToSpend, forecast, generateAiAdvice, generateInsights, getUpcomingBills, money } from "./logic";
+import { askFinanceAssistant, forecast, generateAiAdvice, generateInsights, getUpcomingBills, money } from "./logic";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
@@ -40,22 +40,46 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const netTransactions = useMemo(
-    () => transactions.reduce((acc, tx) => acc + tx.amount, 0),
+  const weeklyTransactionsNet = useMemo(
+    () =>
+      transactions
+        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }))
+        .reduce((acc, tx) => {
+          const normalized = tx.type === "expense" ? -Math.abs(tx.amount) : Math.abs(tx.amount);
+          return acc + normalized;
+        }, 0),
     [transactions],
   );
-  const effectiveCurrentBalance = settings
-    ? settings.currentBalance + netTransactions
-    : 0;
-  const realBalance = settings
-    ? effectiveCurrentBalance - settings.reservedSavings
-    : 0;
-  const safe = settings
-    ? calcSafeToSpend({ ...settings, currentBalance: effectiveCurrentBalance }, subscriptions)
-    : 0;
+  const weeklyUpcomingSubs = useMemo(
+    () => getUpcomingBills(subscriptions, 7).reduce((acc, sub) => acc + sub.amount, 0),
+    [subscriptions],
+  );
+  const monthlyTransactionsNet = useMemo(
+    () =>
+      transactions
+        .filter((tx) => format(parseISO(tx.date), "yyyy-MM") === format(new Date(), "yyyy-MM"))
+        .reduce((acc, tx) => {
+          const normalized = tx.type === "expense" ? -Math.abs(tx.amount) : Math.abs(tx.amount);
+          return acc + normalized;
+        }, 0),
+    [transactions],
+  );
+  const monthlyUpcomingSubs = useMemo(
+    () => getUpcomingBills(subscriptions, 30).reduce((acc, sub) => acc + sub.amount, 0),
+    [subscriptions],
+  );
+  const weeklySalary = settings?.currentBalance ?? 0;
+  const monthlySalary = weeklySalary * 4;
+  const monthlySavingsReserve = (settings?.reservedSavings ?? 0) * 4;
+  const weeklyRealBalance = weeklySalary + weeklyTransactionsNet - weeklyUpcomingSubs - (settings?.reservedSavings ?? 0);
+  const monthlyRealBalance = monthlySalary + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
+  const weeklySafeToUse = Math.max(0, weeklyRealBalance);
   const insights = useMemo(() => generateInsights(transactions, subscriptions), [transactions, subscriptions]);
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
-  const forecastData = useMemo(() => (settings ? forecast(transactions, subscriptions, settings) : []), [transactions, subscriptions, settings]);
+  const forecastData = useMemo(
+    () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: weeklySalary }) : []),
+    [transactions, subscriptions, settings, weeklySalary],
+  );
   const aiAdvice = useMemo(() => generateAiAdvice(transactions, subscriptions), [transactions, subscriptions]);
   const monthlyExpensesByCategory = useMemo(() => {
     const monthKey = format(new Date(), "yyyy-MM");
@@ -151,20 +175,24 @@ function App() {
         {tab === "Home" && (
           <>
             <section className="card main-card">
-              <p className="muted">Safe to Spend</p>
-              <h2>{money(safe)}</h2>
-              <p className="muted">Real balance {money(realBalance)} - upcoming bills</p>
+              <p className="muted">Weekly Safe to Use</p>
+              <h2>{money(weeklySafeToUse)}</h2>
+              <p className="muted">After this week's bills, savings, and transactions</p>
             </section>
             <section className="credit-card">
               <div className="credit-card-top">
                 <p className="muted">Zero Card</p>
                 <span className="chip" aria-hidden="true" />
               </div>
-              <p className="credit-card-balance-label">Current balance</p>
-              <h3 className="credit-card-balance">{money(realBalance)}</h3>
+              <p className="credit-card-balance-label">Monthly real balance</p>
+              <h3 className="credit-card-balance">{money(monthlyRealBalance)}</h3>
               <div className="credit-card-bottom">
-                <span>•••• 2048</span>
-                <span>{format(new Date(), "MM/yy")}</span>
+                <span>Salary {money(monthlySalary)}</span>
+                <span>Subs -{money(monthlyUpcomingSubs)}</span>
+              </div>
+              <div className="credit-card-bottom">
+                <span>Tx {money(monthlyTransactionsNet)}</span>
+                <span>Savings -{money(monthlySavingsReserve)}</span>
               </div>
             </section>
             <section className="card">
@@ -256,7 +284,7 @@ function App() {
             </section>
             <section className="card">
               <h3>Weekly snapshot</h3>
-              <Snapshot transactions={transactions} settingsBalance={settings.currentBalance} />
+              <Snapshot transactions={transactions} settingsBalance={weeklyRealBalance} />
             </section>
           </>
         )}
@@ -264,8 +292,10 @@ function App() {
         {tab === "Settings" && (
           <section className="card">
             <h3>Settings</h3>
-            <label>Current balance <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
-            <label>Reserved savings <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+            <label>Weekly salary <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
+            <label>Weekly savings reserve <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+            <p className="muted">Weekly safe formula: Salary {money(weeklySalary)} + Tx {money(weeklyTransactionsNet)} - Subs {money(weeklyUpcomingSubs)} - Savings {money(settings.reservedSavings)}</p>
+            <p className="muted">Monthly balance formula: Salary {money(monthlySalary)} + Tx {money(monthlyTransactionsNet)} - Subs {money(monthlyUpcomingSubs)} - Savings {money(monthlySavingsReserve)}</p>
             <div className="inline-actions">
               <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
               <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
