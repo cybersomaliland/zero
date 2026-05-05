@@ -25,9 +25,13 @@ button, input, select { font: inherit; }
   border-radius: 999px;
   display: grid;
   place-items: center;
-  font-size: 17px;
   background: linear-gradient(145deg, #ffd479, #ff9e46);
   box-shadow: 0 8px 18px #ff9e4645, inset 0 1px 0 #ffffff88;
+}
+.streak-icon svg {
+  width: 18px;
+  height: 18px;
+  color: #fff;
 }
 h1 { margin: 2px 0 0; font-size: 26px; letter-spacing: -0.02em; }
 h2 { margin: 6px 0; font-size: clamp(34px, 9vw, 42px); letter-spacing: -0.03em; line-height: 1.05; }
@@ -201,10 +205,16 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   letter-spacing: .02em;
   box-shadow: 0 12px 28px #0a84ff70, inset 0 1px 0 #ffffff66;
   cursor: pointer;
+  display: grid;
+  place-items: center;
   z-index: 25;
   transition: transform .2s ease, box-shadow .2s ease;
 }
 .ai-fab:active { transform: scale(.94); }
+.ai-fab svg {
+  width: 22px;
+  height: 22px;
+}
 
 .ai-chat {
   position: fixed;
@@ -363,13 +373,15 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   transition: transform .18s ease, color .18s ease, background .18s ease;
 }
 .tabbar .tab-icon {
-  font-size: 15px;
-  line-height: 1;
   width: 24px;
   height: 24px;
   border-radius: 999px;
   display: grid;
   place-items: center;
+}
+.tabbar .tab-icon svg {
+  width: 18px;
+  height: 18px;
 }
 .tabbar .tab-label {
   line-height: 1;
