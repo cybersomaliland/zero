@@ -23,6 +23,11 @@ self.addEventListener("message", (event) => {
   if (event.data?.type === "UPDATE_NOTIFICATION_DATA") {
     notificationData = { ...notificationData, ...(event.data.payload ?? {}) };
   }
+  if (event.data?.type === "CLEAR_CACHES") {
+    event.waitUntil(
+      caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))),
+    );
+  }
 });
 
 self.addEventListener("periodicsync", (event) => {

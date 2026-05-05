@@ -28,6 +28,7 @@ function App() {
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
     { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
   ]);
@@ -130,6 +131,19 @@ function App() {
     });
     return [...blanks, ...cells];
   }, [transactions]);
+  const dailyBreakdown = useMemo(() => {
+    return transactions.reduce<Record<string, { spent: number; income: number; count: number }>>((acc, tx) => {
+      const key = format(parseISO(tx.date), "yyyy-MM-dd");
+      if (!acc[key]) acc[key] = { spent: 0, income: 0, count: 0 };
+      acc[key].count += 1;
+      if (tx.type === "expense") acc[key].spent += Math.abs(tx.amount);
+      else acc[key].income += Math.abs(tx.amount);
+      return acc;
+    }, {});
+  }, [transactions]);
+  const todayKey = format(new Date(), "yyyy-MM-dd");
+  const todaySpent = dailyBreakdown[todayKey]?.spent || 0;
+  const todayRemaining = safePerDay - todaySpent;
   const streakDays = useMemo(() => {
     const txDays = new Set(
       transactions.map((tx) => format(parseISO(tx.date), "yyyy-MM-dd")),
@@ -148,13 +162,19 @@ function App() {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
       if (registration) {
+        registration.active?.postMessage({ type: "CLEAR_CACHES" });
         await registration.update();
         if (registration.waiting) {
           registration.waiting.postMessage({ type: "SKIP_WAITING" });
         }
       }
     }
-    window.location.reload();
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    const hardUrl = `${window.location.pathname}?refresh=${Date.now()}${window.location.hash}`;
+    window.location.replace(hardUrl);
   };
 
   const enableNotifications = async () => {
@@ -211,6 +231,65 @@ function App() {
       });
     });
   }, [upcoming.length]);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    let reloading = false;
+
+    const forceReload = () => {
+      if (reloading) return;
+      reloading = true;
+      const url = `${window.location.pathname}?refresh=${Date.now()}${window.location.hash}`;
+      window.location.replace(url);
+    };
+
+    const attachUpdateHandler = (registration: ServiceWorkerRegistration) => {
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+      registration.addEventListener("updatefound", () => {
+        const installing = registration.installing;
+        if (!installing) return;
+        installing.addEventListener("statechange", () => {
+          if (installing.state === "installed" && navigator.serviceWorker.controller) {
+            installing.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+      });
+    };
+
+    navigator.serviceWorker.getRegistration().then((registration) => {
+      if (!registration) return;
+      attachUpdateHandler(registration);
+      void registration.update();
+    });
+
+    navigator.serviceWorker.ready.then((registration) => {
+      attachUpdateHandler(registration);
+    });
+
+    navigator.serviceWorker.addEventListener("controllerchange", forceReload);
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      navigator.serviceWorker.getRegistration().then((registration) => {
+        if (!registration) return;
+        void registration.update();
+      });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const updateInterval = window.setInterval(() => {
+      navigator.serviceWorker.getRegistration().then((registration) => {
+        if (!registration) return;
+        void registration.update();
+      });
+    }, 60_000);
+
+    return () => {
+      navigator.serviceWorker.removeEventListener("controllerchange", forceReload);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(updateInterval);
+    };
+  }, []);
 
   if (loading || !settings) return <div className="screen"><div className="skeleton large" /><div className="skeleton" /><div className="skeleton" /></div>;
 
@@ -285,24 +364,32 @@ function App() {
               <h3>Weekly progress</h3>
               <p className="muted">Soft guidance, no strict warnings</p>
             </div>
-            <section className="card">
-              <h3>Weekly money map</h3>
-              <div className="snapshot-grid">
-                <article><p className="muted">Spent this week</p><strong>{money(weeklySpent)}</strong></article>
-                <article><p className="muted">Income this week</p><strong>{money(weeklyIncome)}</strong></article>
-                <article><p className="muted">Bills due this week</p><strong>{money(weeklyUpcomingSubs)}</strong></article>
+            <section className="card daily-goal-card">
+              <div className="row">
+                <h3>Daily allowance goal</h3>
+                <span className="goal-pill">{money(safePerDay)}</span>
               </div>
-              <div className="plan-row">
-                <div className="row">
-                  <strong>Safe per day ({daysLeftInWeek} day(s) left)</strong>
-                  <span className="muted">{money(safePerDay)}</span>
+              <p className="muted">Spend gently today to stay on track for the week.</p>
+              <div className="daily-goal-ring-wrap">
+                <div
+                  className="daily-goal-ring"
+                  style={{
+                    background: `conic-gradient(#0a84ff ${Math.min(
+                      100,
+                      Math.max(0, (Math.abs(weeklySpent - weeklyIncome) / Math.max(1, safePerDay * 7)) * 100),
+                    )}%, #e6ebf5 0%)`,
+                  }}
+                >
+                  <div className="daily-goal-inner">
+                    <p className="muted">Today target</p>
+                    <strong>{money(safePerDay)}</strong>
+                  </div>
                 </div>
-                <div className="plan-track">
-                  <div
-                    className={`plan-fill ${safePerDay < 10 ? "warn" : ""}`}
-                    style={{ width: `${Math.min(100, Math.max(10, (safePerDay / Math.max(1, weeklySalaryAllocation / 7)) * 100))}%` }}
-                  />
-                </div>
+              </div>
+              <div className="snapshot-grid">
+                <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
+                <article><p className="muted">Left for today</p><strong className={todayRemaining < 0 ? "negative" : "positive"}>{money(todayRemaining)}</strong></article>
+                <article><p className="muted">Bills due this week</p><strong>{money(weeklyUpcomingSubs)}</strong></article>
               </div>
             </section>
 
@@ -328,14 +415,25 @@ function App() {
                   cell.blank ? (
                     <div key={cell.key} className="calendar-cell blank" />
                   ) : (
-                    <div key={cell.key} className={`calendar-cell ${cell.today ? "today" : ""}`}>
+                    <button
+                      key={cell.key}
+                      type="button"
+                      className={`calendar-cell ${cell.today ? "today" : ""} ${selectedCalendarDay === cell.key ? "selected" : ""}`}
+                      onClick={() => setSelectedCalendarDay(cell.key)}
+                    >
                       <span className="day">{cell.day}</span>
                       <span className={`amt ${cell.amount > 0 ? "spent" : ""}`}>
                         {cell.amount > 0 ? money(cell.amount) : "-"}
                       </span>
-                    </div>
+                    </button>
                   ),
                 )}
+              </div>
+              <div className="calendar-detail">
+                <strong>{format(parseISO(selectedCalendarDay), "EEE, MMM d")}</strong>
+                <span className="muted">
+                  Spent {money(dailyBreakdown[selectedCalendarDay]?.spent || 0)} | Income {money(dailyBreakdown[selectedCalendarDay]?.income || 0)} | Tx {dailyBreakdown[selectedCalendarDay]?.count || 0}
+                </span>
               </div>
             </section>
           </div>
