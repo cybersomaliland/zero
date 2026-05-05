@@ -178,6 +178,14 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .danger-btn { margin-top: 14px; border: 0; border-radius: 14px; padding: 10px 14px; background: #f7d9dd; color: #9b1c28; cursor: pointer; width: 100%; }
 .row button:active, .tabbar button:active { transform: scale(.96); }
 .tx-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #efeff2; touch-action: pan-y; }
+.tx-category-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
 .positive { color: #24a148; font-weight: 700; }
 .negative { color: #c43d3d; font-weight: 700; }
 .urgency { display: flex; justify-content: space-between; align-items: center; border-radius: 14px; padding: 10px 12px; margin-top: 8px; }

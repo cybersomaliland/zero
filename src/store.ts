@@ -18,6 +18,7 @@ type State = {
   addTransactionsBulk: (rows: Array<Omit<Transaction, "id" | "createdAt" | "category"> & { category?: string }>) => Promise<void>;
   updateSettings: (s: Partial<Settings>) => Promise<void>;
   learnRule: (keyword: string, category: string) => Promise<void>;
+  recategorizeTransactions: () => Promise<void>;
   clearData: () => Promise<void>;
 };
 
@@ -39,11 +40,11 @@ export const useZeroStore = create<State>((set, get) => ({
   },
   addTransaction: async (t) => {
     const { rules } = get();
-    const inferred = inferCategory(`${t.note ?? ""} ${t.type}`, rules);
+    const inferred = inferCategory(`${t.note ?? ""} ${t.category ?? ""} ${t.type}`, rules);
     const tx: Omit<Transaction, "id"> = {
       amount: t.amount,
       type: t.type,
-      category: t.category || inferred || (t.type === "income" ? "Income" : "General"),
+      category: t.category || (t.type === "income" ? "Income" : inferred),
       note: t.note,
       date: t.date,
       createdAt: new Date().toISOString(),
@@ -70,11 +71,11 @@ export const useZeroStore = create<State>((set, get) => ({
   addTransactionsBulk: async (rows) => {
     const { rules } = get();
     const prepared = rows.map((t) => {
-      const inferred = inferCategory(`${t.note ?? ""} ${t.type}`, rules);
+      const inferred = inferCategory(`${t.note ?? ""} ${t.category ?? ""} ${t.type}`, rules);
       return {
         amount: t.amount,
         type: t.type,
-        category: t.category || inferred || (t.type === "income" ? "Income" : "General"),
+        category: t.category || (t.type === "income" ? "Income" : inferred),
         note: t.note,
         date: t.date,
         createdAt: new Date().toISOString(),
@@ -93,6 +94,18 @@ export const useZeroStore = create<State>((set, get) => ({
   },
   learnRule: async (keyword, category) => {
     await db.categoryRules.add({ keyword: keyword.toLowerCase(), category, updatedAt: new Date().toISOString() });
+    await get().init();
+  },
+  recategorizeTransactions: async () => {
+    const { rules } = get();
+    const all = await db.transactions.toArray();
+    for (const tx of all) {
+      const inferred = tx.type === "income"
+        ? "Income"
+        : inferCategory(`${tx.note ?? ""} ${tx.category ?? ""} ${tx.type}`, rules);
+      if (!tx.id || !inferred || inferred === tx.category) continue;
+      await db.transactions.update(tx.id, { category: inferred });
+    }
     await get().init();
   },
   clearData: async () => {

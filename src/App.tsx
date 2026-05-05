@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfDay, startOfMonth } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
@@ -16,10 +17,8 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Settings: { icon: "settings", label: "Settings" },
 };
 
-const categories = ["Food & Drink", "Transport", "Subscriptions", "Shopping", "Housing", "Health", "Income", "General"];
-
 function App() {
-  const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData } = useZeroStore();
+  const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData, recategorizeTransactions } = useZeroStore();
   const [tab, setTab] = useState<Tab>("Home");
   const [showTx, setShowTx] = useState(false);
   const [showSub, setShowSub] = useState(false);
@@ -515,6 +514,17 @@ function App() {
               </button>
             </div>
             <p className="muted">Notification status: {notifState}</p>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={async () => {
+                const ok = window.confirm("Re-categorize all transactions with improved smart rules?");
+                if (!ok) return;
+                await recategorizeTransactions();
+              }}
+            >
+              Re-categorize transactions
+            </button>
             <button type="button" onClick={() => { void refreshApp(); }}>Refresh app</button>
             <button
               className="danger-btn"
@@ -664,9 +674,15 @@ function App() {
 }
 
 function TransactionRow({ tx, onDelete, onEdit }: { tx: any; onDelete: () => void; onEdit: () => void }) {
+  const cat = getCategoryDefinition(tx.category || "General");
   return (
     <motion.div className="tx-row" drag="x" dragConstraints={{ left: 0, right: 0 }} onDragEnd={(_, info) => { if (info.offset.x < -80) onDelete(); if (info.offset.x > 80) onEdit(); }}>
-      <div><strong>{tx.category}</strong><p className="muted">{tx.note || "No note"}</p></div>
+      <div>
+        <strong className="tx-category-badge" style={{ background: cat.color.bg, color: cat.color.text, boxShadow: `inset 0 0 0 1px ${cat.color.ring}` }}>
+          {tx.category}
+        </strong>
+        <p className="muted">{tx.note || "No note"}</p>
+      </div>
       <div className={tx.type === "income" ? "positive" : "negative"}>{money(tx.amount)}</div>
     </motion.div>
   );
@@ -697,7 +713,7 @@ function TransactionSheet({ initial, onClose, onSave }: { initial?: any; onClose
         <label>Amount<input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="-5 or 2000" required /></label>
         <label>Type<select value={type} onChange={(e) => setType(e.target.value as TxType)}><option value="expense">Expense</option><option value="income">Income</option></select></label>
         <label>Category<input value={category} onChange={(e) => setCategory(e.target.value)} list="categories" placeholder="Auto if empty" /></label>
-        <datalist id="categories">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+        <datalist id="categories">{CATEGORY_NAMES.map((c) => <option key={c} value={c} />)}</datalist>
         <label>Note<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note" /></label>
         <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>

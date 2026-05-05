@@ -1,4 +1,5 @@
 import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, format, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
+import { inferCategoryFromText } from "./categories";
 import type { Settings, Subscription, Transaction } from "./types";
 
 export const money = (v: number) =>
@@ -8,8 +9,12 @@ export const dayKey = (date: string) => format(parseISO(date), "yyyy-MM-dd");
 
 export function inferCategory(input: string, rules: { keyword: string; category: string }[]) {
   const lowered = input.toLowerCase();
-  const hit = rules.find((rule) => lowered.includes(rule.keyword.toLowerCase()));
-  return hit?.category;
+  const matchedRules = rules.filter((rule) => lowered.includes(rule.keyword.toLowerCase()));
+  if (matchedRules.length > 0) {
+    matchedRules.sort((a, b) => b.keyword.length - a.keyword.length);
+    return matchedRules[0].category;
+  }
+  return inferCategoryFromText(input, "expense");
 }
 
 export function getDueStatus(date: string) {
