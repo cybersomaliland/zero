@@ -143,6 +143,18 @@ function App() {
               <h2>{money(safe)}</h2>
               <p className="muted">Balance {money(settings.currentBalance)} - Bills - Reserved savings</p>
             </section>
+            <section className="credit-card">
+              <div className="credit-card-top">
+                <p className="muted">Zero Card</p>
+                <span className="chip" aria-hidden="true" />
+              </div>
+              <p className="credit-card-balance-label">Current balance</p>
+              <h3 className="credit-card-balance">{money(settings.currentBalance)}</h3>
+              <div className="credit-card-bottom">
+                <span>•••• 2048</span>
+                <span>{format(new Date(), "MM/yy")}</span>
+              </div>
+            </section>
             <section className="card">
               <h3>Spending plan</h3>
               {Object.entries(settings.monthlyTargets).length === 0 && (
