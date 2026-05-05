@@ -68,17 +68,18 @@ function App() {
     () => getUpcomingBills(subscriptions, 30).reduce((acc, sub) => acc + sub.amount, 0),
     [subscriptions],
   );
-  const weeklySalary = settings?.currentBalance ?? 0;
-  const monthlySalary = weeklySalary * 4;
-  const monthlySavingsReserve = (settings?.reservedSavings ?? 0) * 4;
-  const weeklyRealBalance = weeklySalary + weeklyTransactionsNet - weeklyUpcomingSubs - (settings?.reservedSavings ?? 0);
+  const monthlySalary = settings?.currentBalance ?? 0;
+  const weeklySalaryAllocation = monthlySalary / 4.33;
+  const monthlySavingsReserve = settings?.reservedSavings ?? 0;
+  const weeklySavingsReserve = monthlySavingsReserve / 4.33;
+  const weeklyRealBalance = weeklySalaryAllocation + weeklyTransactionsNet - weeklyUpcomingSubs - weeklySavingsReserve;
   const monthlyRealBalance = monthlySalary + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
   const weeklySafeToUse = Math.max(0, weeklyRealBalance);
   const insights = useMemo(() => generateInsights(transactions, subscriptions), [transactions, subscriptions]);
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
-    () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: weeklySalary }) : []),
-    [transactions, subscriptions, settings, weeklySalary],
+    () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: monthlySalary }) : []),
+    [transactions, subscriptions, settings, monthlySalary],
   );
   const aiAdvice = useMemo(() => generateAiAdvice(transactions, subscriptions), [transactions, subscriptions]);
   const monthlyExpensesByCategory = useMemo(() => {
@@ -292,10 +293,10 @@ function App() {
         {tab === "Settings" && (
           <section className="card">
             <h3>Settings</h3>
-            <label>Weekly salary <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
-            <label>Weekly savings reserve <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
-            <p className="muted">Weekly safe formula: Salary {money(weeklySalary)} + Tx {money(weeklyTransactionsNet)} - Subs {money(weeklyUpcomingSubs)} - Savings {money(settings.reservedSavings)}</p>
-            <p className="muted">Monthly balance formula: Salary {money(monthlySalary)} + Tx {money(monthlyTransactionsNet)} - Subs {money(monthlyUpcomingSubs)} - Savings {money(monthlySavingsReserve)}</p>
+            <label>Monthly salary <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
+            <label>Monthly savings reserve <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+            <p className="muted">Weekly safe formula: Weekly allocation {money(weeklySalaryAllocation)} + this week Tx {money(weeklyTransactionsNet)} - week subs {money(weeklyUpcomingSubs)} - weekly savings {money(weeklySavingsReserve)}</p>
+            <p className="muted">Monthly balance formula: Salary {money(monthlySalary)} + month Tx {money(monthlyTransactionsNet)} - month subs {money(monthlyUpcomingSubs)} - savings {money(monthlySavingsReserve)}</p>
             <div className="inline-actions">
               <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
               <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
