@@ -1,0 +1,23 @@
+{
+  "name": "Zero",
+  "short_name": "Zero",
+  "description": "Personal finance with clarity and calm.",
+  "theme_color": "#0A84FF",
+  "background_color": "#f4f5f7",
+  "display": "standalone",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
