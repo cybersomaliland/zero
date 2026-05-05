@@ -8,6 +8,13 @@ import type { SubscriptionCycle, TxType } from "./types";
 
 const tabs = ["Home", "Transactions", "Subscriptions", "Insights", "Settings"] as const;
 type Tab = (typeof tabs)[number];
+const tabMeta: Record<Tab, { icon: string; label: string }> = {
+  Home: { icon: "⌂", label: "Home" },
+  Transactions: { icon: "↕", label: "Activity" },
+  Subscriptions: { icon: "◌", label: "Subs" },
+  Insights: { icon: "◔", label: "Insights" },
+  Settings: { icon: "⚙", label: "Settings" },
+};
 
 const categories = ["Food & Drink", "Transport", "Subscriptions", "Shopping", "Housing", "Health", "Income", "General"];
 
@@ -161,8 +168,9 @@ function App() {
 
       <nav className="tabbar">
         {tabs.map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t}
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} aria-label={tabMeta[t].label}>
+            <span className="tab-icon" aria-hidden="true">{tabMeta[t].icon}</span>
+            <span className="tab-label">{tabMeta[t].label}</span>
           </button>
         ))}
       </nav>
