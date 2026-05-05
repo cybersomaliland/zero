@@ -40,7 +40,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const safe = settings ? calcSafeToSpend(settings, subscriptions) : 0;
+  const netTransactions = useMemo(
+    () => transactions.reduce((acc, tx) => acc + tx.amount, 0),
+    [transactions],
+  );
+  const effectiveCurrentBalance = settings
+    ? settings.currentBalance + netTransactions
+    : 0;
+  const realBalance = settings
+    ? effectiveCurrentBalance - settings.reservedSavings
+    : 0;
+  const safe = settings
+    ? calcSafeToSpend({ ...settings, currentBalance: effectiveCurrentBalance }, subscriptions)
+    : 0;
   const insights = useMemo(() => generateInsights(transactions, subscriptions), [transactions, subscriptions]);
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(() => (settings ? forecast(transactions, subscriptions, settings) : []), [transactions, subscriptions, settings]);
@@ -141,7 +153,7 @@ function App() {
             <section className="card main-card">
               <p className="muted">Safe to Spend</p>
               <h2>{money(safe)}</h2>
-              <p className="muted">Balance {money(settings.currentBalance)} - Bills - Reserved savings</p>
+              <p className="muted">Real balance {money(realBalance)} - upcoming bills</p>
             </section>
             <section className="credit-card">
               <div className="credit-card-top">
@@ -149,7 +161,7 @@ function App() {
                 <span className="chip" aria-hidden="true" />
               </div>
               <p className="credit-card-balance-label">Current balance</p>
-              <h3 className="credit-card-balance">{money(settings.currentBalance)}</h3>
+              <h3 className="credit-card-balance">{money(realBalance)}</h3>
               <div className="credit-card-bottom">
                 <span>•••• 2048</span>
                 <span>{format(new Date(), "MM/yy")}</span>
