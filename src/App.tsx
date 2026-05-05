@@ -31,6 +31,9 @@ function App() {
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
     { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
   ]);
+  const [notifState, setNotifState] = useState<"unsupported" | "default" | "granted" | "denied">(
+    "default",
+  );
 
   useEffect(() => {
     void init();
@@ -64,6 +67,61 @@ function App() {
     }
     window.location.reload();
   };
+
+  const enableNotifications = async () => {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setNotifState("unsupported");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotifState(permission as "default" | "granted" | "denied");
+    if (permission !== "granted") return;
+
+    const registration = await navigator.serviceWorker.ready;
+    registration.active?.postMessage({ type: "UPDATE_NOTIFICATION_DATA", payload: { upcomingCount: upcoming.length } });
+    await registration.showNotification("Zero notifications enabled", {
+      body: "We will remind you about upcoming bills and daily money check-ins.",
+      icon: "/icon.svg",
+      badge: "/icon.svg",
+      tag: "zero-enabled",
+    });
+
+    const periodic = (registration as ServiceWorkerRegistration & {
+      periodicSync?: { register: (tag: string, options: { minInterval: number }) => Promise<void> };
+    }).periodicSync;
+    if (periodic?.register) {
+      await periodic.register("zero-daily-check", { minInterval: 24 * 60 * 60 * 1000 });
+    }
+  };
+
+  const testNotification = async () => {
+    if (!("serviceWorker" in navigator)) return;
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification("Zero reminder", {
+      body: `You have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
+      icon: "/icon.svg",
+      badge: "/icon.svg",
+      tag: "zero-test",
+    });
+  };
+
+  useEffect(() => {
+    if (!("Notification" in window)) {
+      setNotifState("unsupported");
+      return;
+    }
+    setNotifState(Notification.permission as "default" | "granted" | "denied");
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then((registration) => {
+      registration.active?.postMessage({
+        type: "UPDATE_NOTIFICATION_DATA",
+        payload: { upcomingCount: upcoming.length },
+      });
+    });
+  }, [upcoming.length]);
 
   if (loading || !settings) return <div className="screen"><div className="skeleton large" /><div className="skeleton" /><div className="skeleton" /></div>;
 
@@ -184,6 +242,13 @@ function App() {
             <h3>Settings</h3>
             <label>Current balance <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
             <label>Reserved savings <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+            <div className="inline-actions">
+              <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
+              <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
+                Test notification
+              </button>
+            </div>
+            <p className="muted">Notification status: {notifState}</p>
             <button type="button" onClick={() => { void refreshApp(); }}>Refresh app</button>
             <button
               className="danger-btn"
