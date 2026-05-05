@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfMonth } from "date-fns";
+import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfDay, startOfMonth } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
@@ -88,7 +88,11 @@ function App() {
   const weeklySavingsReserve = monthlySavingsReserve / 4.33;
   const weeklyRealBalance = weeklySalaryAllocation + weeklyTransactionsNet - weeklyUpcomingSubs - weeklySavingsReserve;
   const monthlyRealBalance = monthlySalary + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
-  const weeklySafeToUse = Math.max(0, weeklyRealBalance);
+  const daysLeftInMonth = Math.max(
+    1,
+    differenceInCalendarDays(endOfMonth(new Date()), startOfDay(new Date())) + 1,
+  );
+  const weeklySafeToUse = Math.max(0, (monthlyRealBalance / daysLeftInMonth) * 7);
   const daysLeftInWeek = Math.max(1, 7 - (new Date().getDay() === 0 ? 7 : new Date().getDay()) + 1);
   const safePerDay = weeklySafeToUse / daysLeftInWeek;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
@@ -258,7 +262,7 @@ function App() {
             <section className="card main-card">
               <p className="muted">Weekly Safe to Use</p>
               <h2>{money(weeklySafeToUse)}</h2>
-              <p className="muted">After this week's bills, savings, and transactions</p>
+              <p className="muted">Allowance from live balance and current spending pace</p>
             </section>
             <section className="credit-card">
               <div className="credit-card-top">
