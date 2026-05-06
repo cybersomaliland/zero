@@ -43,6 +43,7 @@ function App() {
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [assistantEngineReason, setAssistantEngineReason] = useState("");
   const [showMorningBriefing, setShowMorningBriefing] = useState(false);
+  const [morningQuestion, setMorningQuestion] = useState("");
   const [ritualReview, setRitualReview] = useState("");
   const [ritualPriorityOne, setRitualPriorityOne] = useState("");
   const [ritualPriorityTwo, setRitualPriorityTwo] = useState("");
@@ -359,6 +360,28 @@ function App() {
     if (fallbackHeadline) items.push(`News watch: ${fallbackHeadline.title}`);
     return items.slice(0, 4);
   }, [todayRemaining, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
+  const morningCoachBriefing = useMemo(() => {
+    const preferredName = settings?.profileName?.trim() || "Guled Abdi";
+    const greeting = currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : "Good evening";
+    const dayPart = format(new Date(), "EEEE");
+    const budgetLine = todayRemaining >= 0
+      ? `You've got about ${money(todayRemaining)} to work with today — solid room if you stay intentional.`
+      : `You're about ${money(Math.abs(todayRemaining))} over today's target, but you can still recover with one tight spending choice.`;
+    const taskMealLine = tasks.length === 0 && mealStats.planned === 0
+      ? "No tasks or meals locked in yet — that's not empty, that's open space to shape your day."
+      : `You're at ${doneTasks}/${tasks.length || 0} tasks and ${mealStats.completed}/${mealStats.planned || 0} meals — keep the rhythm steady.`;
+    const timelineLine = timelineEvents.length === 0
+      ? "Your timeline is clear right now, which means you can claim the best hours before they disappear."
+      : `You've got ${timelineEvents.length} timeline block(s) — keep your next block protected.`;
+    const somalilandLine = fallbackHeadline
+      ? "Somaliland is already moving this morning — stay informed, but keep your focus tight."
+      : "Somaliland morning energy is calm right now — perfect time to make your first strong move.";
+    const nudge = tasks.length === 0
+      ? "One move: write one priority before 9am and finish it first."
+      : "One move: finish your top task before you check socials again.";
+    const combined = `${greeting}, ${preferredName}. ${dayPart} is here — make it count. ${budgetLine} ${taskMealLine} ${timelineLine} ${somalilandLine} ${nudge}`;
+    return combined.split(/\s+/).slice(0, 80).join(" ");
+  }, [settings?.profileName, currentHour, todayRemaining, tasks.length, doneTasks, mealStats.planned, mealStats.completed, timelineEvents.length, fallbackHeadline]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -1173,60 +1196,94 @@ function App() {
         {showMorningBriefing && (
           <motion.div className="sheet-wrap morning-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.section className="sheet morning-sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
-              <div className="row">
-                <div>
-                  <p className="home-kicker">Good morning</p>
-                  <h3>Coach Zero briefing</h3>
-                </div>
-                <button type="button" className="ghost-btn" onClick={() => setShowMorningBriefing(false)}>Close</button>
-              </div>
-              <p className="muted">Hi {settings.profileName?.trim() || "there"}, {format(new Date(), "EEEE, MMM d")} · here is your personalized daily briefing.</p>
-              <div className="morning-grid">
-                <article><p className="muted">Money target</p><strong>{money(safePerDay)}</strong></article>
-                <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
-                <article><p className="muted">Tasks</p><strong>{dailyBriefing.taskSignal}</strong></article>
-                <article><p className="muted">Meals</p><strong>{dailyBriefing.mealSignal}</strong></article>
-              </div>
-              <div className="morning-timeline">
+              <div className="morning-top">
                 <div className="row">
-                  <h4>Day timeline</h4>
-                  <span className="badge">{timelineEvents.length} events</span>
-                </div>
-                {sortedTimelineEvents.slice(0, 4).map((event) => (
-                  <div key={event.id} className={`timeline-event ${event.category}`}>
-                    <span>{event.hour === 12 ? "12pm" : event.hour > 12 ? `${event.hour - 12}pm` : `${event.hour}am`} · {event.title}</span>
+                  <div>
+                    <p className="home-kicker">Good morning</p>
+                    <h3>Coach Zero briefing</h3>
                   </div>
-                ))}
-                {sortedTimelineEvents.length === 0 && <p className="muted">No timeline blocks yet. Add your first focus block in Routine.</p>}
-              </div>
-              <div className="morning-news">
-                <div className="row">
-                  <h4>Hot Somaliland news</h4>
-                  <button type="button" className="ghost-btn" onClick={() => { void refreshNews(); }}>Refresh</button>
-                </div>
-                {!newsLoading && fallbackHeadline && (
-                  <button
-                    type="button"
-                    className="news-hot-item"
-                    onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
-                  >
-                    <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
-                    <strong className="news-hot-title">{(latestNewsIsFresh ? latestNews : fallbackHeadline).title}</strong>
-                    <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
-                  </button>
-                )}
-                {newsLoading && <p className="muted">Loading latest Somaliland updates...</p>}
-                {!newsLoading && !fallbackHeadline && <p className="muted">No headlines yet. Tap refresh to check again.</p>}
-              </div>
-              <div className="morning-news">
-                <div className="row">
-                  <h4>Coach Zero suggestions</h4>
-                </div>
-                <div className="suggestion-list">
-                  {coachSuggestions.map((tip) => <p key={tip} className="muted">- {tip}</p>)}
+                  <button type="button" className="ghost-btn" onClick={() => setShowMorningBriefing(false)}>Close</button>
                 </div>
               </div>
-              <button type="button" onClick={() => setShowMorningBriefing(false)}>Start my day</button>
+              <div className="morning-content">
+                <p className="muted">{morningCoachBriefing}</p>
+                <div className="morning-grid">
+                  <article><p className="muted">Money target</p><strong>{money(safePerDay)}</strong></article>
+                  <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
+                  <article><p className="muted">Tasks</p><strong>{dailyBriefing.taskSignal}</strong></article>
+                  <article><p className="muted">Meals</p><strong>{dailyBriefing.mealSignal}</strong></article>
+                </div>
+                <div className="morning-timeline">
+                  <div className="row">
+                    <h4>Day timeline</h4>
+                    <span className="badge">{timelineEvents.length} events</span>
+                  </div>
+                  {sortedTimelineEvents.slice(0, 4).map((event) => (
+                    <div key={event.id} className={`timeline-event ${event.category}`}>
+                      <span>{event.hour === 12 ? "12pm" : event.hour > 12 ? `${event.hour - 12}pm` : `${event.hour}am`} · {event.title}</span>
+                    </div>
+                  ))}
+                  {sortedTimelineEvents.length === 0 && <p className="muted">Your best hours are still open. Add one intentional block in Routine.</p>}
+                </div>
+                <div className="morning-news">
+                  <div className="row">
+                    <h4>Hot Somaliland news</h4>
+                    <button type="button" className="ghost-btn" onClick={() => { void refreshNews(); }}>Refresh</button>
+                  </div>
+                  {!newsLoading && fallbackHeadline && (
+                    <button
+                      type="button"
+                      className="news-hot-item"
+                      onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
+                    >
+                      <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
+                      <strong className="news-hot-title">{(latestNewsIsFresh ? latestNews : fallbackHeadline).title}</strong>
+                      <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
+                    </button>
+                  )}
+                  {newsLoading && <p className="muted">Loading latest Somaliland updates...</p>}
+                  {!newsLoading && !fallbackHeadline && <p className="muted">No headlines yet. Tap refresh to check again.</p>}
+                </div>
+                <div className="morning-news">
+                  <div className="row">
+                    <h4>Coach Zero suggestions</h4>
+                  </div>
+                  <div className="suggestion-list">
+                    {coachSuggestions.map((tip) => <p key={tip} className="muted">- {tip}</p>)}
+                  </div>
+                </div>
+              </div>
+              <div className="morning-coach-quick">
+                <button type="button" onClick={() => { void askAssistant("Turn my briefing into 3 action steps."); setAssistantOpen(true); }}>
+                  Action steps
+                </button>
+                <button type="button" onClick={() => { void askAssistant("Suggest 3 tasks I should add now."); setAssistantOpen(true); }}>
+                  Add tasks
+                </button>
+                <button type="button" onClick={() => { void askAssistant("Plan my spending for today in one rule."); setAssistantOpen(true); }}>
+                  Money rule
+                </button>
+              </div>
+              <div className="morning-coach-input">
+                <input
+                  value={morningQuestion}
+                  onChange={(e) => setMorningQuestion(e.target.value)}
+                  placeholder="Ask Coach Zero while planning..."
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!morningQuestion.trim()) return;
+                    const q = morningQuestion.trim();
+                    setMorningQuestion("");
+                    void askAssistant(q);
+                    setAssistantOpen(true);
+                  }}
+                >
+                  Ask
+                </button>
+              </div>
+              <button type="button" className="close-day-btn" onClick={() => setShowMorningBriefing(false)}>Start my day</button>
             </motion.section>
           </motion.div>
         )}

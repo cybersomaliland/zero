@@ -1012,10 +1012,28 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   backdrop-filter: blur(2px);
 }
 .morning-sheet {
-  max-height: min(88dvh, 760px);
-  overflow: auto;
+  height: min(92dvh, 840px);
   border-radius: 28px 28px 0 0;
   background: linear-gradient(180deg, #fffffffa, #f5f8ffef);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.morning-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, #ffffff, #ffffffd9);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e8edf7;
+  margin: -16px -16px 0;
+  padding: 12px 16px 10px;
+}
+.morning-content {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
 }
 .morning-grid {
   display: grid;
@@ -1042,6 +1060,36 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .suggestion-list {
   display: grid;
   gap: 6px;
+}
+.morning-coach-quick {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.morning-coach-quick::-webkit-scrollbar { display: none; }
+.morning-coach-quick button {
+  border: 0;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #325c9d;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+.morning-coach-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.morning-coach-input input {
+  background: #fff;
+}
+.morning-coach-input button {
+  border: 0;
+  border-radius: 12px;
+  padding: 0 14px;
+  background: linear-gradient(145deg, #0a84ff, #0066e0);
+  color: #fff;
 }
 label { display: grid; gap: 6px; color: #33353a; font-size: 14px; }
 input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; padding: 10px 12px; background: #f8f9fb; font-size: 16px; }
