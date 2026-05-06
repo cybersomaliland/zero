@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
+import { fetchSomalilandNews, type NewsItem } from "./news";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
@@ -23,6 +24,12 @@ function App() {
   const [showTx, setShowTx] = useState(false);
   const [showSub, setShowSub] = useState(false);
   const [showBulkTx, setShowBulkTx] = useState(false);
+  const [showWeeklySafe, setShowWeeklySafe] = useState(false);
+  const [showMonthlyBalance, setShowMonthlyBalance] = useState(false);
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsError, setNewsError] = useState("");
+  const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -39,6 +46,32 @@ function App() {
   useEffect(() => {
     void init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (newsItems.length <= 1) return;
+    const id = window.setInterval(() => {
+      setActiveHeadlineIndex((i) => (i + 1) % newsItems.length);
+    }, 4500);
+    return () => window.clearInterval(id);
+  }, [newsItems]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setNewsLoading(true);
+    setNewsError("");
+    fetchSomalilandNews(controller.signal)
+      .then((items) => {
+        setNewsItems(items);
+        if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
+      })
+      .catch(() => {
+        setNewsError("News temporarily unavailable.");
+      })
+      .finally(() => {
+        setNewsLoading(false);
+      });
+    return () => controller.abort();
   }, []);
 
   const weeklyTransactionsNet = useMemo(
@@ -337,15 +370,38 @@ function App() {
       <main className="content">
         {tab === "Home" && (
           <div className="home-layout">
-            <section className="home-intro">
-              <div>
-                <p className="home-kicker">Weekly money overview</p>
-                <h2 className="home-title">Plan your week with clarity</h2>
+            <section className="home-intro news-card">
+              <div className="row">
+                <div>
+                  <p className="home-kicker">Somaliland brief</p>
+                  <h2 className="home-title">Top News</h2>
+                </div>
+                <span className="news-live-dot">Live</span>
               </div>
-              <div className="home-pills">
-                <span>Salary set</span>
-                <span>Live tracking</span>
-              </div>
+              {newsLoading && <p className="muted">Loading latest headlines...</p>}
+              {!newsLoading && newsError && <p className="muted">{newsError}</p>}
+              {!newsLoading && !newsError && newsItems.length > 0 && (
+                <button
+                  type="button"
+                  className="news-hot-item"
+                  onClick={() => window.open(newsItems[activeHeadlineIndex].url, "_blank", "noopener,noreferrer")}
+                >
+                  <span className="news-hot-label">Hot headline</span>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.strong
+                      key={newsItems[activeHeadlineIndex].url}
+                      className="news-hot-title"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.25 }}
+                    >
+                      {newsItems[activeHeadlineIndex].title}
+                    </motion.strong>
+                  </AnimatePresence>
+                  <span className="muted">{newsItems[activeHeadlineIndex].source}</span>
+                </button>
+              )}
             </section>
 
             <div className="home-section-head">
@@ -354,8 +410,33 @@ function App() {
             </div>
             <section className="card main-card">
               <p className="muted">Weekly Safe to Use</p>
-              <h2>{money(weeklySafeToUse)}</h2>
-              <p className="muted">Allowance from live balance and current spending pace</p>
+              <button type="button" className="amount-reveal-btn" onClick={() => setShowWeeklySafe((v) => !v)}>
+                <AnimatePresence mode="wait" initial={false}>
+                  {showWeeklySafe ? (
+                    <motion.h2
+                      key="weekly-shown"
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {money(weeklySafeToUse)}
+                    </motion.h2>
+                  ) : (
+                    <motion.h2
+                      key="weekly-hidden"
+                      className="amount-hidden"
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      ****
+                    </motion.h2>
+                  )}
+                </AnimatePresence>
+              </button>
+              <p className="muted">{showWeeklySafe ? "Tap amount to hide" : "Tap amount to reveal"}</p>
             </section>
             <section className="credit-card">
               <div className="credit-card-top">
@@ -363,7 +444,32 @@ function App() {
                 <span className="chip" aria-hidden="true" />
               </div>
               <p className="credit-card-balance-label">Monthly real balance</p>
-              <h3 className="credit-card-balance">{money(monthlyRealBalance)}</h3>
+              <button type="button" className="credit-card-balance amount-reveal-btn" onClick={() => setShowMonthlyBalance((v) => !v)}>
+                <AnimatePresence mode="wait" initial={false}>
+                  {showMonthlyBalance ? (
+                    <motion.span
+                      key="monthly-shown"
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {money(monthlyRealBalance)}
+                    </motion.span>
+                  ) : (
+                    <motion.span
+                      key="monthly-hidden"
+                      className="amount-hidden"
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      ****
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </button>
               <div className="credit-card-bottom">
                 <span>Salary {money(monthlySalary)}</span>
                 <span>Subs -{money(monthlyUpcomingSubs)}</span>
