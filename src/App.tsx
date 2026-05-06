@@ -277,16 +277,6 @@ function App() {
     }
   };
 
-  const weeklyTransactionsNet = useMemo(
-    () =>
-      transactions
-        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }))
-        .reduce((acc, tx) => {
-          const normalized = tx.type === "expense" ? -Math.abs(tx.amount) : Math.abs(tx.amount);
-          return acc + normalized;
-        }, 0),
-    [transactions],
-  );
   const weeklySpent = useMemo(
     () =>
       transactions
@@ -321,9 +311,7 @@ function App() {
   );
   const monthlySalary = settings?.monthlySalary ?? 0;
   const realBalance = settings?.currentBalance ?? 0;
-  const weeklySalaryAllocation = monthlySalary / 4.33;
   const monthlySavingsReserve = settings?.reservedSavings ?? 0;
-  const weeklySavingsReserve = monthlySavingsReserve / 4.33;
   const monthlyRealBalance = realBalance + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
   const daysLeftInMonth = Math.max(
     1,
@@ -731,6 +719,70 @@ function App() {
     }
     setPushStatusDetail("Coach Zero notification sent.");
   };
+  const runAssistantAutomation = async (question: string) => {
+    const notes: string[] = [];
+    const preferredName = settings?.profileName?.trim() || "there";
+    const text = question.toLowerCase();
+    const asksReminder = /remind me|set reminder|schedule reminder|routine reminder/.test(text);
+    const asksNotification = /notify me now|send (me )?a notification|ping me/.test(text);
+    if ((asksReminder || asksNotification) && notifState !== "granted") {
+      const note = "Notifications are not enabled yet. Please enable notifications first.";
+      notes.push(note);
+      setPushStatusDetail(note);
+      return notes;
+    }
+    if (asksReminder) {
+      let delaySeconds = 1800;
+      const hourMatch = question.match(/(\d+)\s*(hour|hours|hr|hrs)/i);
+      const minuteMatch = question.match(/(\d+)\s*(minute|minutes|min|mins)/i);
+      if (hourMatch) delaySeconds = Math.max(60, Number(hourMatch[1]) * 3600);
+      else if (minuteMatch) delaySeconds = Math.max(60, Number(minuteMatch[1]) * 60);
+      const messageMatch = question.match(/(?:to|about)\s+(.+)$/i);
+      const reminderMessage = messageMatch?.[1]?.trim() || routineReminderBody;
+      const response = await fetch("/api/schedule-notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Coach Zero reminder",
+          body: reminderMessage,
+          displayName: preferredName,
+          delaySeconds,
+        }),
+      });
+      if (response.ok) {
+        const note = `Reminder scheduled in ${Math.max(1, Math.round(delaySeconds / 60))} min.`;
+        notes.push(note);
+        setPushStatusDetail(note);
+      } else {
+        const errorBody = await response.json().catch(() => ({}));
+        const note = String(errorBody?.error || "Failed to schedule reminder.");
+        notes.push(note);
+        setPushStatusDetail(note);
+      }
+    }
+    if (asksNotification) {
+      const response = await fetch("/api/send-notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Coach Zero for ${preferredName}`,
+          body: "Quick nudge: review your priorities and stay on target today.",
+          displayName: preferredName,
+        }),
+      });
+      if (response.ok) {
+        const note = "Notification sent to your device.";
+        notes.push(note);
+        setPushStatusDetail(note);
+      } else {
+        const errorBody = await response.json().catch(() => ({}));
+        const note = String(errorBody?.error || "Failed to send notification.");
+        notes.push(note);
+        setPushStatusDetail(note);
+      }
+    }
+    return notes;
+  };
   const reconnectPush = async () => {
     if (!("serviceWorker" in navigator)) {
       setPushConnected(false);
@@ -778,6 +830,7 @@ function App() {
     setChat(nextHistory);
     setAssistantBusy(true);
     try {
+      const actionNotes = await runAssistantAutomation(text);
       const answer = await askGroqFinanceAssistant({
         question: text,
         chatHistory: historyBeforeQuestion,
@@ -800,7 +853,10 @@ function App() {
       });
       setAssistantEngine("groq");
       setAssistantEngineReason("");
-      setChat((c) => [...c, { role: "assistant", text: answer }]);
+      const withActions = actionNotes.length > 0
+        ? `${answer}\n\nActions completed:\n- ${actionNotes.join("\n- ")}`
+        : answer;
+      setChat((c) => [...c, { role: "assistant", text: withActions }]);
     } catch (error) {
       const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
       setAssistantEngine("fallback");
@@ -1323,7 +1379,7 @@ function App() {
                 <label>Monthly savings reserve<input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
               </div>
               <div className="settings-formula">
-                <p className="muted">Weekly safe: {money(weeklySalaryAllocation)} + {money(weeklyTransactionsNet)} - {money(weeklyUpcomingSubs)} - {money(weeklySavingsReserve)}</p>
+                <p className="muted">Weekly safe (from monthly real balance): {money(weeklySafeToUse)}</p>
                 <p className="muted">Monthly balance: {money(realBalance)} + {money(monthlyTransactionsNet)} - {money(monthlyUpcomingSubs)} - {money(monthlySavingsReserve)}</p>
               </div>
             </section>
