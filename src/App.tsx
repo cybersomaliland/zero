@@ -1,10 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfDay, startOfMonth } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
-import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
+import { askFinanceAssistant, forecast, getUpcomingBills, money } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
@@ -15,12 +14,14 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Home: { icon: "home", label: "Home" },
   Transactions: { icon: "activity", label: "Activity" },
   Subscriptions: { icon: "subscriptions", label: "Subs" },
-  Insights: { icon: "insights", label: "Insights" },
+  Insights: { icon: "insights", label: "Routine" },
   Settings: { icon: "settings", label: "Settings" },
 };
 const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
   { role: "assistant", text: "I am your Zero AI assistant. I use your real balance, salary plan, bills, and spending habits to give personal advice." },
 ];
+type TimelineCategory = "work" | "health" | "personal";
+type TaskPriority = "high" | "medium" | "low";
 
 function App() {
   const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData, recategorizeTransactions } = useZeroStore();
@@ -41,6 +42,31 @@ function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [assistantEngineReason, setAssistantEngineReason] = useState("");
+  const [ritualReview, setRitualReview] = useState("");
+  const [ritualPriorityOne, setRitualPriorityOne] = useState("");
+  const [ritualPriorityTwo, setRitualPriorityTwo] = useState("");
+  const [ritualPriorityThree, setRitualPriorityThree] = useState("");
+  const [ritualIntention, setRitualIntention] = useState("");
+  const [ritualAvoid, setRitualAvoid] = useState("");
+  const [ritualEnergy, setRitualEnergy] = useState<number>(3);
+  const [timelineSortAsc, setTimelineSortAsc] = useState(true);
+  const [timelineEvents, setTimelineEvents] = useState<Array<{ id: number; title: string; hour: number; category: TimelineCategory }>>([]);
+  const [timelineTitle, setTimelineTitle] = useState("");
+  const [timelineHour, setTimelineHour] = useState("9");
+  const [timelineCategory, setTimelineCategory] = useState<TimelineCategory>("work");
+  const [habits, setHabits] = useState<Array<{ id: number; name: string; done: boolean }>>([]);
+  const [habitName, setHabitName] = useState("");
+  const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
+  const [taskCategory, setTaskCategory] = useState<TimelineCategory>("work");
+  const [taskFilter, setTaskFilter] = useState<"all" | "open" | "done">("all");
+  const [taskCategoryFilter, setTaskCategoryFilter] = useState<"all" | TimelineCategory>("all");
+  const [reflectionOne, setReflectionOne] = useState("");
+  const [reflectionTwo, setReflectionTwo] = useState("");
+  const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
+  const [dayClosed, setDayClosed] = useState(false);
+  const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
@@ -80,6 +106,12 @@ function App() {
     if (!assistantOpen) return;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [assistantOpen, chat, assistantBusy]);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setCurrentHour(new Date().getHours());
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const refreshNews = async () => {
     const controller = new AbortController();
@@ -158,7 +190,6 @@ function App() {
     () => (settings ? forecast(transactions, subscriptions, settings) : []),
     [transactions, subscriptions, settings],
   );
-  const aiAdvice = useMemo(() => generateAiAdvice(transactions, subscriptions), [transactions, subscriptions]);
   const spendingCalendar = useMemo(() => {
     const now = new Date();
     const monthStart = startOfMonth(now);
@@ -228,6 +259,44 @@ function App() {
     }
     return streak;
   }, [transactions]);
+  const ritualCompletion = useMemo(
+    () => ([
+      ritualReview.trim().length > 0,
+      [ritualPriorityOne, ritualPriorityTwo, ritualPriorityThree].filter((v) => v.trim().length > 0).length === 3,
+      ritualIntention.trim().length > 0,
+      ritualAvoid.trim().length > 0,
+      ritualEnergy >= 1 && ritualEnergy <= 5,
+    ]),
+    [ritualReview, ritualPriorityOne, ritualPriorityTwo, ritualPriorityThree, ritualIntention, ritualAvoid, ritualEnergy],
+  );
+  const ritualDoneCount = useMemo(() => ritualCompletion.filter(Boolean).length, [ritualCompletion]);
+  const ritualProgress = useMemo(
+    () => (ritualDoneCount / ritualCompletion.length) * 100,
+    [ritualDoneCount, ritualCompletion.length],
+  );
+  const sortedTimelineEvents = useMemo(() => {
+    const copy = [...timelineEvents];
+    copy.sort((a, b) => timelineSortAsc ? a.hour - b.hour : b.hour - a.hour);
+    return copy;
+  }, [timelineEvents, timelineSortAsc]);
+  const timelineHours = useMemo(() => Array.from({ length: 17 }, (_, idx) => idx + 6), []);
+  const habitsDone = useMemo(() => habits.filter((h) => h.done).length, [habits]);
+  const habitRate = habits.length ? (habitsDone / habits.length) * 100 : 0;
+  const filteredTasks = useMemo(
+    () => tasks.filter((t) => {
+      if (taskFilter === "open" && t.done) return false;
+      if (taskFilter === "done" && !t.done) return false;
+      if (taskCategoryFilter !== "all" && t.category !== taskCategoryFilter) return false;
+      return true;
+    }),
+    [tasks, taskFilter, taskCategoryFilter],
+  );
+  const doneTasks = useMemo(() => tasks.filter((t) => t.done).length, [tasks]);
+  const overallScore = useMemo(() => {
+    const taskPct = tasks.length ? doneTasks / tasks.length : 0;
+    const habitPct = habits.length ? habitsDone / habits.length : 0;
+    return Math.round(((taskPct + habitPct) / 2) * 100);
+  }, [tasks, habits, doneTasks, habitsDone]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -650,33 +719,212 @@ function App() {
         )}
 
         {tab === "Insights" && (
-          <>
-            <section className="card">
+          <div className="routine-layout">
+            <section className="card routine-card">
               <div className="row">
-                <h3>AI-powered insights</h3>
-                <span className="badge">Local AI</span>
+                <h3>Morning ritual</h3>
+                <span className="badge">{ritualDoneCount}/5 done</span>
               </div>
-              {aiAdvice.map((tip) => <p key={tip} className="insight">{tip}</p>)}
-            </section>
-            <section className="card">
-              <h3>Cash flow forecast (60 days)</h3>
-              <div className="chart">
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={forecastData}>
-                    <defs><linearGradient id="bal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0A84FF" stopOpacity={0.45} /><stop offset="95%" stopColor="#0A84FF" stopOpacity={0.05} /></linearGradient></defs>
-                    <XAxis dataKey="date" tickLine={false} axisLine={false} />
-                    <YAxis tickLine={false} axisLine={false} />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="balance" stroke="#0A84FF" fill="url(#bal)" strokeWidth={3} />
-                  </AreaChart>
-                </ResponsiveContainer>
+              <p className="muted">5-step guided planning session.</p>
+              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${ritualProgress}%` }} /></div>
+              <label className="routine-step-label">
+                <span className="routine-step-title">1. Review yesterday</span>
+                <textarea value={ritualReview} onChange={(e) => setRitualReview(e.target.value)} rows={2} placeholder="What worked well yesterday?" />
+              </label>
+              <div className="routine-step-label">
+                <span className="routine-step-title">2. Set top 3 priorities</span>
+                <div className="routine-priority-grid">
+                  <input value={ritualPriorityOne} onChange={(e) => setRitualPriorityOne(e.target.value)} placeholder="Priority 1" />
+                  <input value={ritualPriorityTwo} onChange={(e) => setRitualPriorityTwo(e.target.value)} placeholder="Priority 2" />
+                  <input value={ritualPriorityThree} onChange={(e) => setRitualPriorityThree(e.target.value)} placeholder="Priority 3" />
+                </div>
+              </div>
+              <label className="routine-step-label">
+                <span className="routine-step-title">3. Write daily intention</span>
+                <input value={ritualIntention} onChange={(e) => setRitualIntention(e.target.value)} placeholder="How do you want to show up today?" />
+              </label>
+              <label className="routine-step-label">
+                <span className="routine-step-title">4. List things to avoid</span>
+                <input value={ritualAvoid} onChange={(e) => setRitualAvoid(e.target.value)} placeholder="Distractions or habits to avoid" />
+              </label>
+              <label className="routine-step-label">
+                <span className="routine-step-title">5. Rate energy level ({ritualEnergy}/5)</span>
+                <input type="range" min={1} max={5} step={1} value={ritualEnergy} onChange={(e) => setRitualEnergy(Number(e.target.value))} />
+              </label>
+              <div className="routine-checkline">
+                {["Review", "Top 3", "Intention", "Avoid", "Energy"].map((name, idx) => (
+                  <span key={name} className={`routine-check-pill ${ritualCompletion[idx] ? "done" : ""}`}>{name}</span>
+                ))}
               </div>
             </section>
-            <section className="card">
-              <h3>Weekly snapshot</h3>
-              <Snapshot transactions={transactions} settingsBalance={weeklyRealBalance} />
+
+            <section className="card routine-card">
+              <div className="row">
+                <h3>Visual day timeline</h3>
+                <button type="button" className="ghost-btn" onClick={() => setTimelineSortAsc((v) => !v)}>
+                  Sort {timelineSortAsc ? "latest" : "earliest"}
+                </button>
+              </div>
+              <p className="muted">6am to 10pm schedule with live hour marker.</p>
+              <div className="routine-inline-form">
+                <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add event" />
+                <input type="number" min={6} max={22} value={timelineHour} onChange={(e) => setTimelineHour(e.target.value)} />
+                <select value={timelineCategory} onChange={(e) => setTimelineCategory(e.target.value as TimelineCategory)}>
+                  <option value="work">Work</option>
+                  <option value="health">Health</option>
+                  <option value="personal">Personal</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const hour = Number(timelineHour);
+                    if (!timelineTitle.trim() || hour < 6 || hour > 22) return;
+                    setTimelineEvents((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), hour, category: timelineCategory }]);
+                    setTimelineTitle("");
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+              <div className="timeline-list">
+                {timelineHours.map((hour) => {
+                  const atHour = sortedTimelineEvents.filter((event) => event.hour === hour);
+                  return (
+                    <div key={hour} className={`timeline-hour ${hour === currentHour ? "current" : ""}`}>
+                      <div className="timeline-hour-label">
+                        {hour > 12 ? `${hour - 12}pm` : `${hour}am`}
+                        {hour === currentHour && <span className="timeline-now">You are here</span>}
+                      </div>
+                      <div className="timeline-hour-events">
+                        {atHour.length === 0 && <p className="muted">-</p>}
+                        {atHour.map((event) => (
+                          <div key={event.id} className={`timeline-event ${event.category}`}>
+                            <span>{event.title}</span>
+                            <button type="button" onClick={() => setTimelineEvents((prev) => prev.filter((x) => x.id !== event.id))}>Delete</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {timelineEvents.length === 0 && <p className="muted routine-empty">No events yet. Add your first block to map your day.</p>}
             </section>
-          </>
+
+            <section className="card routine-card">
+              <div className="row">
+                <h3>Habit tracker</h3>
+                <span className="badge">{Math.round(habitRate)}%</span>
+              </div>
+              <p className="muted">Done: {habitsDone} Remaining: {Math.max(0, habits.length - habitsDone)} Rate: {Math.round(habitRate)}%</p>
+              <div className="routine-inline-form">
+                <input value={habitName} onChange={(e) => setHabitName(e.target.value)} placeholder="Add habit" />
+                <button type="button" onClick={() => {
+                  if (!habitName.trim()) return;
+                  setHabits((prev) => [...prev, { id: Date.now(), name: habitName.trim(), done: false }]);
+                  setHabitName("");
+                }}>Add</button>
+              </div>
+              {habits.length === 0 && <p className="muted routine-empty">No habits yet. Add one small daily habit to start your streak.</p>}
+              {habits.map((habit) => (
+                <div key={habit.id} className="routine-row">
+                  <label className="routine-check-item">
+                    <input type="checkbox" checked={habit.done} onChange={() => setHabits((prev) => prev.map((h) => h.id === habit.id ? { ...h, done: !h.done } : h))} />
+                    <span>{habit.name}</span>
+                  </label>
+                  <button type="button" className="ghost-btn" onClick={() => setHabits((prev) => prev.filter((h) => h.id !== habit.id))}>Delete</button>
+                </div>
+              ))}
+            </section>
+
+            <section className="card routine-card">
+              <div className="row">
+                <h3>Task manager</h3>
+                <span className="badge">{doneTasks}/{tasks.length} done</span>
+              </div>
+              <div className="routine-inline-form">
+                <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Add task" />
+                <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <select value={taskCategory} onChange={(e) => setTaskCategory(e.target.value as TimelineCategory)}>
+                  <option value="work">Work</option>
+                  <option value="personal">Personal</option>
+                  <option value="health">Health</option>
+                </select>
+                <button type="button" onClick={() => {
+                  if (!taskTitle.trim()) return;
+                  setTasks((prev) => [...prev, { id: Date.now(), title: taskTitle.trim(), priority: taskPriority, category: taskCategory, done: false }]);
+                  setTaskTitle("");
+                }}>Add</button>
+              </div>
+              <div className="task-filter-row">
+                <button type="button" className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All</button>
+                <button type="button" className={taskFilter === "open" ? "active" : ""} onClick={() => setTaskFilter("open")}>Open</button>
+                <button type="button" className={taskFilter === "done" ? "active" : ""} onClick={() => setTaskFilter("done")}>Done</button>
+                <button type="button" className={taskCategoryFilter === "all" ? "active" : ""} onClick={() => setTaskCategoryFilter("all")}>Any tag</button>
+                <button type="button" className={taskCategoryFilter === "work" ? "active" : ""} onClick={() => setTaskCategoryFilter("work")}>Work</button>
+                <button type="button" className={taskCategoryFilter === "personal" ? "active" : ""} onClick={() => setTaskCategoryFilter("personal")}>Personal</button>
+                <button type="button" className={taskCategoryFilter === "health" ? "active" : ""} onClick={() => setTaskCategoryFilter("health")}>Health</button>
+              </div>
+              {tasks.length === 0 && <p className="muted routine-empty">No tasks yet. Add tasks and organize your day by priority and tag.</p>}
+              {filteredTasks.map((task) => (
+                <div key={task.id} className="routine-row">
+                  <label className="routine-check-item">
+                    <input type="checkbox" checked={task.done} onChange={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: !t.done } : t))} />
+                    <span>{task.title}</span>
+                  </label>
+                  <span className={`task-meta ${task.priority}`}>{task.priority} · {task.category}</span>
+                  <button type="button" className="ghost-btn" onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}>Delete</button>
+                </div>
+              ))}
+            </section>
+
+            <section className="card routine-card">
+              <div className="row">
+                <h3>End-of-day shutdown</h3>
+                <span className="badge">Score {overallScore}%</span>
+              </div>
+              <p className="muted">Tasks done: {doneTasks}/{tasks.length} · Habits done: {habitsDone}/{habits.length}</p>
+              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${overallScore}%` }} /></div>
+              <h4>Incomplete tasks</h4>
+              {tasks.filter((t) => !t.done).length === 0 && <p className="muted">All tasks completed today.</p>}
+              {tasks.filter((t) => !t.done).map((task) => (
+                <div key={task.id} className="routine-row">
+                  <span>{task.title}</span>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: false, title: `${t.title} (tomorrow)` } : t))}
+                  >
+                    Move to tomorrow
+                  </button>
+                </div>
+              ))}
+              <label>Reflection prompt 1: What went well today?
+                <textarea value={reflectionOne} onChange={(e) => setReflectionOne(e.target.value)} rows={2} />
+              </label>
+              <label>Reflection prompt 2: What will I improve tomorrow?
+                <textarea value={reflectionTwo} onChange={(e) => setReflectionTwo(e.target.value)} rows={2} />
+              </label>
+              <div className="task-filter-row">
+                {[1, 2, 3, 4, 5].map((rate) => (
+                  <button key={rate} type="button" className={dayRating === rate ? "active" : ""} onClick={() => setDayRating(rate as 1 | 2 | 3 | 4 | 5)}>
+                    {rate}★
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setDayClosed(true)}>Close the day</button>
+              {dayClosed && (
+                <div className="routine-celebration">
+                  <h4>Day closed. Great work.</h4>
+                  <p className="muted">You stayed intentional today. Keep the streak alive tomorrow.</p>
+                </div>
+              )}
+            </section>
+          </div>
         )}
 
         {tab === "Settings" && (
@@ -1108,24 +1356,6 @@ function CalendarDaySheet({
         </div>
       </motion.section>
     </motion.div>
-  );
-}
-
-function Snapshot({ transactions, settingsBalance }: { transactions: any[]; settingsBalance: number }) {
-  const monthExpenses = transactions.filter((t) => t.type === "expense" && format(parseISO(t.date), "yyyy-MM") === format(new Date(), "yyyy-MM"));
-  const totalSpent = monthExpenses.reduce((a, t) => a + Math.abs(t.amount), 0);
-  const byCategory: Record<string, number> = monthExpenses.reduce(
-    (acc: Record<string, number>, t) => ({ ...acc, [t.category]: (acc[t.category] || 0) + Math.abs(t.amount) }),
-    {},
-  );
-  const topCategory = (Object.entries(byCategory) as [string, number][])
-    .sort((a, b) => b[1] - a[1])[0]?.[0] || "None yet";
-  return (
-    <div className="snapshot-grid">
-      <article><p className="muted">Total spent</p><strong>{money(totalSpent)}</strong></article>
-      <article><p className="muted">Top category</p><strong>{topCategory}</strong></article>
-      <article><p className="muted">Remaining</p><strong>{money(settingsBalance - totalSpent)}</strong></article>
-    </div>
   );
 }
 

@@ -55,6 +55,189 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .muted { color: #7a7a82; margin: 0; }
 .content { display: grid; gap: 12px; }
 .home-layout { display: grid; gap: 12px; }
+.routine-layout { display: grid; gap: 12px; }
+.routine-card {
+  display: grid;
+  gap: 10px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fffffffa, #f6f9ffef);
+  box-shadow: 0 10px 28px #10182814, inset 0 1px 0 #ffffffcc;
+}
+.routine-progress-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #e8edf5;
+  overflow: hidden;
+}
+.routine-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0a84ff, #5ba8ff);
+  transition: width .25s ease;
+}
+.routine-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.routine-check-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #0a84ff;
+}
+.routine-step-label {
+  display: grid;
+  gap: 6px;
+}
+.routine-step-title {
+  font-size: 13px;
+  color: #4d586e;
+  font-weight: 600;
+}
+.routine-priority-grid {
+  display: grid;
+  gap: 6px;
+}
+.routine-checkline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.routine-check-pill {
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef2f9;
+  color: #68758d;
+}
+.routine-check-pill.done {
+  background: #e7f7ee;
+  color: #1f7b45;
+}
+.routine-inline-form {
+  display: grid;
+  grid-template-columns: 1.2fr .45fr .55fr auto;
+  gap: 8px;
+}
+.routine-inline-form input,
+.routine-inline-form select {
+  background: #fff;
+  border-color: #dde3ef;
+}
+.routine-inline-form button {
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #0a84ff, #0066e0);
+  color: #fff;
+  padding: 0 12px;
+}
+.routine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: #f4f7fc;
+  box-shadow: inset 0 0 0 1px #e6ecf6;
+}
+.timeline-list {
+  display: grid;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+}
+.timeline-hour {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: #f7f9fd;
+}
+.timeline-hour.current {
+  background: #eaf3ff;
+  box-shadow: inset 0 0 0 1px #cde0ff;
+}
+.timeline-hour-label {
+  font-size: 12px;
+  color: #5d6778;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+.timeline-now {
+  font-size: 10px;
+  color: #0a84ff;
+  font-weight: 700;
+}
+.timeline-hour-events {
+  display: grid;
+  gap: 6px;
+}
+.timeline-event {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 7px 9px;
+  color: #1f2738;
+  font-size: 13px;
+}
+.timeline-event.work { background: #e9f2ff; }
+.timeline-event.health { background: #e9f8ef; }
+.timeline-event.personal { background: #f3edff; }
+.timeline-event button {
+  border: 0;
+  background: transparent;
+  color: #51607b;
+  cursor: pointer;
+}
+.task-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  background: #eef2f9;
+  border-radius: 12px;
+}
+.task-filter-row button {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: transparent;
+  color: #506080;
+}
+.task-filter-row button.active {
+  background: #0a84ff;
+  color: #fff;
+  box-shadow: 0 4px 12px #0a84ff4a;
+}
+.task-meta {
+  font-size: 11px;
+  text-transform: capitalize;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+.task-meta.high { background: #ffe8e8; color: #a12a2a; }
+.task-meta.medium { background: #fff4e6; color: #a35a11; }
+.task-meta.low { background: #e8f6ec; color: #1f7b45; }
+.routine-celebration {
+  border-radius: 14px;
+  padding: 12px;
+  background: linear-gradient(145deg, #0a84ff, #0066e0);
+  color: #fff;
+}
+.routine-celebration h4,
+.routine-celebration p { margin: 0; color: #fff; }
+.routine-empty {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f4f7fc;
+  border: 1px dashed #d5deec;
+}
 .home-intro {
   border-radius: 18px;
   padding: 4px 2px 2px;
