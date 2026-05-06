@@ -111,6 +111,7 @@ function App() {
     "default",
   );
   const [pushConnected, setPushConnected] = useState(false);
+  const [pushStatusDetail, setPushStatusDetail] = useState("");
   const [testNotifDelaySec, setTestNotifDelaySec] = useState("10");
   const [scheduledNotifAt, setScheduledNotifAt] = useState<number | null>(null);
   const [timerNow, setTimerNow] = useState<number>(Date.now());
@@ -558,11 +559,16 @@ function App() {
   const enableNotifications = async () => {
     if (!("Notification" in window) || !("serviceWorker" in navigator)) {
       setNotifState("unsupported");
+      setPushStatusDetail("Notifications are not supported on this browser/device.");
       return;
     }
     const permission = await Notification.requestPermission();
     setNotifState(permission as "default" | "granted" | "denied");
-    if (permission !== "granted") return;
+    if (permission !== "granted") {
+      setPushConnected(false);
+      setPushStatusDetail("Permission not granted.");
+      return;
+    }
 
     const registration = await navigator.serviceWorker.ready;
     registration.active?.postMessage({ type: "UPDATE_NOTIFICATION_DATA", payload: { upcomingCount: upcoming.length } });
@@ -581,11 +587,23 @@ function App() {
     }
 
     try {
-      if (!("pushManager" in registration)) return;
+      if (!("pushManager" in registration)) {
+        setPushConnected(false);
+        setPushStatusDetail("PushManager not available. On iPhone, install as Home Screen app and allow notifications.");
+        return;
+      }
       const keyResponse = await fetch("/api/push/public-key");
-      if (!keyResponse.ok) return;
+      if (!keyResponse.ok) {
+        setPushConnected(false);
+        setPushStatusDetail("Push key endpoint unavailable. Start the Express server (`npm run start`) and check VAPID env vars.");
+        return;
+      }
       const keyData = await keyResponse.json();
-      if (!keyData?.publicKey) return;
+      if (!keyData?.publicKey) {
+        setPushConnected(false);
+        setPushStatusDetail("Server did not return a VAPID public key.");
+        return;
+      }
       let subscription = await registration.pushManager.getSubscription();
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
@@ -602,9 +620,17 @@ function App() {
           upcomingCount: upcoming.length,
         }),
       });
-      setPushConnected(syncRes.ok);
+      if (syncRes.ok) {
+        setPushConnected(true);
+        setPushStatusDetail("Connected successfully.");
+      } else {
+        const errorBody = await syncRes.json().catch(() => ({}));
+        setPushConnected(false);
+        setPushStatusDetail(String(errorBody?.error || "Server rejected push subscription."));
+      }
     } catch {
       setPushConnected(false);
+      setPushStatusDetail("Failed to create push subscription on this device.");
     }
   };
 
@@ -621,10 +647,14 @@ function App() {
       });
       if (response.ok) {
         setPushConnected(true);
+        setPushStatusDetail("Connected successfully.");
         return;
       }
+      const errorBody = await response.json().catch(() => ({}));
+      setPushStatusDetail(String(errorBody?.error || "Push test failed on server."));
     } catch {
       // fallback to local notification below
+      setPushStatusDetail("Push server not reachable. Sent local notification fallback.");
     }
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification("Zero reminder", {
@@ -649,6 +679,44 @@ function App() {
       setScheduledNotifAt(null);
       scheduledNotifTimeoutRef.current = null;
     }, delaySec * 1000);
+  };
+  const reconnectPush = async () => {
+    if (!("serviceWorker" in navigator)) {
+      setPushConnected(false);
+      setPushStatusDetail("Service worker is not available on this browser/device.");
+      return;
+    }
+    if (notifState !== "granted") {
+      await enableNotifications();
+      return;
+    }
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      if (!("pushManager" in registration)) {
+        setPushConnected(false);
+        setPushStatusDetail("PushManager not available. On iPhone, install as Home Screen app and allow notifications.");
+        return;
+      }
+      const existing = await registration.pushManager.getSubscription();
+      if (existing) {
+        try {
+          await fetch("/api/push/unsubscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: existing.endpoint }),
+          });
+        } catch {
+          // continue local unsubscribe even if server call fails
+        }
+        await existing.unsubscribe();
+      }
+      setPushConnected(false);
+      setPushStatusDetail("Old push subscription removed. Reconnecting...");
+      await enableNotifications();
+    } catch {
+      setPushConnected(false);
+      setPushStatusDetail("Reconnect failed. Try again after refreshing the app.");
+    }
   };
 
   const askAssistant = async (question: string) => {
@@ -704,9 +772,14 @@ function App() {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker.ready.then((registration) => {
       registration.pushManager.getSubscription().then((subscription) => {
-        setPushConnected(Boolean(subscription));
+        const hasSubscription = Boolean(subscription);
+        setPushConnected(hasSubscription);
+        if (hasSubscription) {
+          setPushStatusDetail("Device has a local push subscription.");
+        }
       }).catch(() => {
         setPushConnected(false);
+        setPushStatusDetail("Could not read push subscription from service worker.");
       });
     });
   }, []);
@@ -1366,6 +1439,9 @@ function App() {
                 <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
                   Test notification
                 </button>
+                <button type="button" className="ghost-btn" onClick={() => { void reconnectPush(); }}>
+                  Reconnect push
+                </button>
               </div>
               <div className="settings-actions">
                 <input
@@ -1392,6 +1468,7 @@ function App() {
               )}
               <p className="muted">Status: <strong>{notifState}</strong></p>
               <p className="muted">Web push: <strong>{pushConnected ? "connected" : "not connected"}</strong></p>
+              {pushStatusDetail && <p className="muted">{pushStatusDetail}</p>}
             </section>
 
             <section className="card settings-card">
