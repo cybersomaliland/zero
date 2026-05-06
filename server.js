@@ -268,10 +268,12 @@ app.post("/api/send-notification", async (req, res) => {
   }
   const title = String(req.body?.title || "").trim();
   const body = String(req.body?.body || "").trim();
+  const displayName = String(req.body?.displayName || "").trim();
   if (!title || !body) {
     return res.status(400).json({ error: "title and body are required" });
   }
-  const payload = { title, body, icon: "/icon.svg", url: "/" };
+  const personalizedBody = displayName ? `Hi ${displayName}, ${body}` : body;
+  const payload = { title, body: personalizedBody, icon: "/icon.svg", url: "/" };
   const targets = [...pushSubscriptions.values()];
   if (targets.length === 0) {
     return res.status(404).json({ error: "No active push subscriptions yet" });
@@ -290,6 +292,7 @@ app.post("/api/schedule-notification", (req, res) => {
   }
   const title = String(req.body?.title || "").trim();
   const body = String(req.body?.body || "").trim();
+  const displayName = String(req.body?.displayName || "").trim();
   const delaySeconds = Number(req.body?.delaySeconds || 0);
   if (!title || !body) {
     return res.status(400).json({ error: "title and body are required" });
@@ -301,7 +304,8 @@ app.post("/api/schedule-notification", (req, res) => {
   if (targets.length === 0) {
     return res.status(404).json({ error: "No active push subscriptions yet" });
   }
-  const payload = { title, body, icon: "/icon.svg", url: "/" };
+  const personalizedBody = displayName ? `Hi ${displayName}, ${body}` : body;
+  const payload = { title, body: personalizedBody, icon: "/icon.svg", url: "/" };
   const timeoutId = setTimeout(async () => {
     try {
       await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));

@@ -74,6 +74,9 @@ function App() {
   const [timelineTitle, setTimelineTitle] = useState("");
   const [timelineHour, setTimelineHour] = useState("9");
   const [timelineCategory, setTimelineCategory] = useState<TimelineCategory>("work");
+  const [routineReminderTitle, setRoutineReminderTitle] = useState("Routine reminder");
+  const [routineReminderBody, setRoutineReminderBody] = useState("Time to review your routine and next priority.");
+  const [routineReminderDelaySec, setRoutineReminderDelaySec] = useState("1800");
   const [mealName, setMealName] = useState("");
   const [meals, setMeals] = useState<Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>>([
     { id: 1, name: "Breakfast", planned: false, done: false, calories: "" },
@@ -569,11 +572,12 @@ function App() {
       setPushStatusDetail("Permission not granted.");
       return;
     }
+    const preferredName = settings?.profileName?.trim() || "there";
 
     const registration = await navigator.serviceWorker.ready;
     registration.active?.postMessage({ type: "UPDATE_NOTIFICATION_DATA", payload: { upcomingCount: upcoming.length } });
     await registration.showNotification("Zero notifications enabled", {
-      body: "We will remind you about upcoming bills and daily money check-ins.",
+      body: `Hi ${preferredName}, I will remind you about upcoming bills and daily money check-ins.`,
       icon: "/icon.svg",
       badge: "/icon.svg",
       tag: "zero-enabled",
@@ -643,12 +647,13 @@ function App() {
 
   const testNotification = async () => {
     if (!("serviceWorker" in navigator)) return;
+    const preferredName = settings?.profileName?.trim() || "there";
     try {
       const response = await fetch("/api/push/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName: settings?.profileName?.trim() || "there",
+          displayName: preferredName,
           upcomingCount: upcoming.length,
         }),
       });
@@ -665,7 +670,7 @@ function App() {
     }
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification("Zero reminder", {
-      body: `You have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
+      body: `Hi ${preferredName}, you have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
       icon: "/icon.svg",
       badge: "/icon.svg",
       tag: "zero-test",
@@ -675,6 +680,7 @@ function App() {
     if (notifState !== "granted") return;
     const parsed = Number(testNotifDelaySec);
     const delaySec = Math.max(1, Math.min(3600, Number.isFinite(parsed) ? Math.floor(parsed) : 10));
+    const preferredName = settings?.profileName?.trim() || "there";
     setTestNotifDelaySec(String(delaySec));
     if (scheduledNotifTimeoutRef.current) {
       window.clearTimeout(scheduledNotifTimeoutRef.current);
@@ -686,7 +692,8 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "Zero reminder",
-        body: `You have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
+        body: `you have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
+        displayName: preferredName,
         delaySeconds: delaySec,
       }),
     }).then(async (response) => {
@@ -712,6 +719,60 @@ function App() {
         scheduledNotifTimeoutRef.current = null;
       }, delaySec * 1000);
     });
+  };
+  const scheduleRoutineReminder = async () => {
+    if (notifState !== "granted") {
+      setPushStatusDetail("Enable notifications first.");
+      return;
+    }
+    const title = routineReminderTitle.trim();
+    const body = routineReminderBody.trim();
+    const preferredName = settings?.profileName?.trim() || "there";
+    const parsedDelay = Number(routineReminderDelaySec);
+    const delaySec = Math.max(60, Math.min(86_400, Number.isFinite(parsedDelay) ? Math.floor(parsedDelay) : 1800));
+    if (!title || !body) {
+      setPushStatusDetail("Reminder title and message are required.");
+      return;
+    }
+    setRoutineReminderDelaySec(String(delaySec));
+    const response = await fetch("/api/schedule-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body, displayName: preferredName, delaySeconds: delaySec }),
+    });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      setPushStatusDetail(String(errorBody?.error || "Failed to schedule routine reminder."));
+      return;
+    }
+    setPushStatusDetail(`Routine reminder scheduled in ${Math.floor(delaySec / 60)} min.`);
+  };
+  const sendAiNotification = async () => {
+    if (notifState !== "granted") {
+      setPushStatusDetail("Enable notifications first.");
+      return;
+    }
+    const lastAssistant = [...chat].reverse().find((msg) => msg.role === "assistant");
+    const preferredName = settings?.profileName?.trim() || "there";
+    if (!lastAssistant) {
+      setPushStatusDetail("No Coach Zero message found yet.");
+      return;
+    }
+    const response = await fetch("/api/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: `Coach Zero for ${preferredName}`,
+        body: lastAssistant.text.slice(0, 180),
+        displayName: preferredName,
+      }),
+    });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      setPushStatusDetail(String(errorBody?.error || "Failed to send AI notification."));
+      return;
+    }
+    setPushStatusDetail("Coach Zero notification sent.");
   };
   const reconnectPush = async () => {
     if (!("serviceWorker" in navigator)) {
@@ -1307,6 +1368,43 @@ function App() {
               {timelineEvents.length === 0 && <p className="muted routine-empty">No events yet. Add your first block to map your day.</p>}
             </section>
 
+            <section className="card routine-card routine-card-equal">
+              <div className="row">
+                <h3>Routine reminders</h3>
+                <span className="badge">Push</span>
+              </div>
+              <p className="muted">Schedule reminders and get Coach Zero notifications on your phone.</p>
+              <div className="routine-reminder-form">
+                <input
+                  value={routineReminderTitle}
+                  onChange={(e) => setRoutineReminderTitle(e.target.value)}
+                  placeholder="Reminder title"
+                />
+                <textarea
+                  value={routineReminderBody}
+                  onChange={(e) => setRoutineReminderBody(e.target.value)}
+                  rows={2}
+                  placeholder="Reminder message"
+                />
+                <div className="routine-reminder-row">
+                  <input
+                    type="number"
+                    min={60}
+                    max={86400}
+                    value={routineReminderDelaySec}
+                    onChange={(e) => setRoutineReminderDelaySec(e.target.value)}
+                    placeholder="Delay in seconds"
+                  />
+                  <button type="button" onClick={() => { void scheduleRoutineReminder(); }}>
+                    Schedule reminder
+                  </button>
+                </div>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => { void sendAiNotification(); }}>
+                Send latest Coach Zero message
+              </button>
+            </section>
+
             <section className="card routine-card">
               <div className="row">
                 <h3>Meal planner</h3>
@@ -1755,6 +1853,9 @@ function App() {
                 void askAssistant("What should I avoid spending on today?");
               }}>
                 Avoid list
+              </button>
+              <button type="button" onClick={() => { void sendAiNotification(); }}>
+                Notify me
               </button>
             </div>
             <div className="assistant-input ai-input-wrap">

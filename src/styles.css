@@ -294,6 +294,26 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   gap: 6px;
   flex-wrap: wrap;
 }
+.routine-reminder-form {
+  display: grid;
+  gap: 8px;
+}
+.routine-reminder-row {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr;
+  gap: 8px;
+}
+.routine-reminder-row input {
+  background: #fff;
+  border-color: #dde3ef;
+}
+.routine-reminder-row button {
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #0a84ff, #0066e0);
+  color: #fff;
+  height: 42px;
+}
 .task-filter-row {
   display: flex;
   flex-wrap: wrap;
