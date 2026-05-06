@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=ios2" />
+    <link rel="manifest" href="/manifest.webmanifest?v=ios2" />
     <meta name="theme-color" content="#0A84FF" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zero</title>
@@ -27,9 +27,9 @@
         display: grid;
         place-items: center;
         background:
-          radial-gradient(circle at 26% 18%, #ffffffa8 0%, #ffffff00 42%),
-          radial-gradient(circle at 76% 84%, #dbe7ff80 0%, #ffffff00 45%),
-          linear-gradient(180deg, #f8fafe 0%, #edf1f8 100%);
+          radial-gradient(circle at 18% 16%, #ffffffd4 0%, #ffffff00 44%),
+          radial-gradient(circle at 84% 88%, #d6e7ff85 0%, #ffffff00 46%),
+          linear-gradient(180deg, #f8fbff 0%, #eef4ff 52%, #e9f0fc 100%);
         transition: opacity 0.45s ease;
       }
       #zero-splash.hide {
@@ -43,23 +43,23 @@
       }
       .zero-splash-glow {
         position: absolute;
-        width: 126px;
-        height: 126px;
-        border-radius: 34px;
-        background: radial-gradient(circle at 35% 20%, #8fa9ff80, #8fa9ff00 72%);
-        filter: blur(8px);
+        width: 134px;
+        height: 134px;
+        border-radius: 40px;
+        background: radial-gradient(circle at 40% 16%, #90b8ff9e, #90b8ff00 72%);
+        filter: blur(10px);
         animation: splashGlow 2.4s ease-in-out infinite;
       }
       .zero-splash-card {
-        width: 102px;
-        height: 102px;
-        border-radius: 30px;
+        width: 108px;
+        height: 108px;
+        border-radius: 32px;
         display: grid;
         place-items: center;
         position: relative;
         overflow: hidden;
-        background: linear-gradient(145deg, #1f2937, #0b1220);
-        box-shadow: 0 16px 38px #0e16253b, inset 0 1px 0 #ffffff66;
+        background: linear-gradient(145deg, #53b4ff, #0a84ff 62%, #0057d9);
+        box-shadow: 0 18px 42px #2f63c33d, inset 0 1px 0 #ffffff9a;
         animation: splashFloat 2.2s ease-in-out infinite;
       }
       .zero-splash-card::before {
@@ -88,22 +88,22 @@
         margin: 0 0 12px;
         font-family: "SF Pro Display", "Inter", "Segoe UI", sans-serif;
         font-weight: 780;
-        font-size: 28px;
+        font-size: 30px;
         line-height: 1;
         letter-spacing: -0.03em;
         text-align: center;
-        color: #0b1220;
+        color: #07132a;
         text-shadow: 0 1px 0 #ffffffcc;
       }
       .zero-splash-subtitle {
         margin: 0 0 14px;
         font-family: "SF Pro Text", "Inter", "Segoe UI", sans-serif;
         font-weight: 520;
-        font-size: 12px;
+        font-size: 11px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         text-align: center;
-        color: #5b6576;
+        color: #60708b;
       }
     </style>
   </head>
@@ -116,7 +116,9 @@
           <div class="zero-splash-glow"></div>
           <div class="zero-splash-card">
             <svg class="zero-splash-logo" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M70 78h116c7 0 12 5 12 12 0 4-2 8-5 10l-93 66h86c7 0 12 5 12 12s-5 12-12 12H70c-7 0-12-5-12-12 0-4 2-8 5-10l93-66H70c-7 0-12-5-12-12s5-12 12-12Z" fill="currentColor"/>
+              <circle cx="128" cy="136" r="58" fill="none" stroke="currentColor" stroke-width="20"/>
+              <path d="M86 154l31-31 22 22 34-34" fill="none" stroke="#e9f4ff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="171" cy="111" r="8" fill="#f8fcff"/>
             </svg>
           </div>
         </div>
