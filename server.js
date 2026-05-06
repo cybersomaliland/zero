@@ -1,11 +1,17 @@
+import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const app = express();
+const PORT = Number(process.env.PORT || 3000);
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.1-8b-instant";
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+app.use(express.json({ limit: "1mb" }));
 
+app.post("/api/groq", async (req, res) => {
   const key = process.env.GROQ_API_KEY;
   if (!key) {
     return res.status(500).json({ error: "Missing GROQ_API_KEY" });
@@ -75,4 +81,13 @@ export default async function handler(req, res) {
       detail: error instanceof Error ? error.message : "Unknown error",
     });
   }
-}
+});
+
+app.use(express.static(path.join(__dirname, "dist")));
+app.get("*", (_, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`Zero server listening on port ${PORT}`);
+});
