@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfDay, startOfMonth } from "date-fns";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { askFinanceAssistant, forecast, generateAiAdvice, getUpcomingBills, money } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
@@ -17,6 +18,9 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Insights: { icon: "insights", label: "Insights" },
   Settings: { icon: "settings", label: "Settings" },
 };
+const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
+  { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
+];
 
 function App() {
   const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData, recategorizeTransactions } = useZeroStore();
@@ -27,18 +31,31 @@ function App() {
   const [showWeeklySafe, setShowWeeklySafe] = useState(false);
   const [showMonthlyBalance, setShowMonthlyBalance] = useState(false);
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
-  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
   const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">(
+    (import.meta as { env?: Record<string, string> }).env?.VITE_GROQ_API_KEY ? "groq" : "fallback",
+  );
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
-  const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
-    { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
-  ]);
+  const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
+    try {
+      const raw = localStorage.getItem("zero_ai_chat_v1");
+      if (!raw) return DEFAULT_CHAT;
+      const parsed = JSON.parse(raw) as Array<{ role: "assistant" | "user"; text: string }>;
+      if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_CHAT;
+      return parsed;
+    } catch {
+      return DEFAULT_CHAT;
+    }
+  });
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
   const [notifState, setNotifState] = useState<"unsupported" | "default" | "granted" | "denied">(
     "default",
   );
@@ -57,22 +74,28 @@ function App() {
   }, [newsItems]);
 
   useEffect(() => {
+    localStorage.setItem("zero_ai_chat_v1", JSON.stringify(chat));
+  }, [chat]);
+
+  useEffect(() => {
+    if (!assistantOpen) return;
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [assistantOpen, chat, assistantBusy]);
+
+  const refreshNews = async () => {
     const controller = new AbortController();
     setNewsLoading(true);
     setNewsError("");
-    fetchSomalilandNews(controller.signal)
-      .then((items) => {
-        setNewsItems(items);
-        if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
-      })
-      .catch(() => {
-        setNewsError("News temporarily unavailable.");
-      })
-      .finally(() => {
-        setNewsLoading(false);
-      });
-    return () => controller.abort();
-  }, []);
+    try {
+      const items = await fetchSomalilandNews(controller.signal);
+      setNewsItems(items);
+      if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
+    } catch {
+      setNewsError("News temporarily unavailable.");
+    } finally {
+      setNewsLoading(false);
+    }
+  };
 
   const weeklyTransactionsNet = useMemo(
     () =>
@@ -261,6 +284,32 @@ function App() {
     });
   };
 
+  const askAssistant = async (question: string) => {
+    if (!question.trim() || !settings) return;
+    const text = question.trim();
+    const nextHistory = [...chat, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
+    setChat(nextHistory);
+    setAssistantBusy(true);
+    try {
+      const answer = await askGroqFinanceAssistant({
+        question: text,
+        chatHistory: nextHistory,
+        transactions,
+        subscriptions,
+        settings,
+        forecastData,
+      });
+      setAssistantEngine("groq");
+      setChat((c) => [...c, { role: "assistant", text: answer }]);
+    } catch {
+      const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
+      setAssistantEngine("fallback");
+      setChat((c) => [...c, { role: "assistant", text: fallback }]);
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!("Notification" in window)) {
       setNotifState("unsupported");
@@ -376,8 +425,13 @@ function App() {
                   <p className="home-kicker">Somaliland brief</p>
                   <h2 className="home-title">Top News</h2>
                 </div>
-                <span className="news-live-dot">Live</span>
+                <button type="button" className="news-live-dot" onClick={() => { void refreshNews(); }}>
+                  {newsLoading ? "Loading..." : "Refresh news"}
+                </button>
               </div>
+              {!newsLoading && newsItems.length === 0 && !newsError && (
+                <p className="muted">Tap “Refresh news” to load hot headlines.</p>
+              )}
               {newsLoading && <p className="muted">Loading latest headlines...</p>}
               {!newsLoading && newsError && <p className="muted">{newsError}</p>}
               {!newsLoading && !newsError && newsItems.length > 0 && (
@@ -470,14 +524,6 @@ function App() {
                   )}
                 </AnimatePresence>
               </button>
-              <div className="credit-card-bottom">
-                <span>Salary {money(monthlySalary)}</span>
-                <span>Subs -{money(monthlyUpcomingSubs)}</span>
-              </div>
-              <div className="credit-card-bottom">
-                <span>Tx {money(monthlyTransactionsNet)}</span>
-                <span>Savings -{money(monthlySavingsReserve)}</span>
-              </div>
             </section>
 
             <div className="home-section-head">
@@ -719,9 +765,18 @@ function App() {
       <AnimatePresence>
         {assistantOpen && (
           <motion.section className="ai-chat" initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.96 }}>
-            <div className="row">
-              <h3>Zero Assistant</h3>
-              <button type="button" onClick={() => setAssistantOpen(false)}>Close</button>
+            <div className="ai-chat-head">
+              <div>
+                <p className="ai-chat-kicker">Zero Intelligence</p>
+                <h3>Personal finance co-pilot</h3>
+              </div>
+              <div className="ai-chat-actions">
+                <span className={`ai-engine-pill ${assistantEngine === "groq" ? "connected" : "fallback"}`}>
+                  {assistantEngine === "groq" ? "Groq connected" : "Fallback mode"}
+                </span>
+                <span className="ai-status-pill">{assistantBusy ? "Thinking" : "Online"}</span>
+                <button type="button" onClick={() => setAssistantOpen(false)}>Close</button>
+              </div>
             </div>
             <div className="ai-chat-log">
               {chat.map((msg, i) => (
@@ -729,68 +784,64 @@ function App() {
                   {msg.text}
                 </p>
               ))}
-            </div>
-            <div className="assistant-input">
-              <input
-                value={assistantQuestion}
-                onChange={(e) => setAssistantQuestion(e.target.value)}
-                placeholder="Ask about your data..."
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  if (!assistantQuestion.trim()) return;
-                  const question = assistantQuestion.trim();
-                  const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                  setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
-                  setAssistantQuestion("");
-                }}
-              >
-                Send
-              </button>
+              {assistantBusy && (
+                <p className="ai-bubble assistant typing">
+                  <span />
+                  <span />
+                  <span />
+                </p>
+              )}
+              <div ref={chatEndRef} />
             </div>
             <div className="assistant-quick">
               <button type="button" onClick={() => {
-                const question = "Where am I wasting money?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("Where am I wasting money?");
               }}>
                 Waste check
               </button>
               <button type="button" onClick={() => {
-                const question = "How much did I spend on food?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("How much did I spend on food?");
               }}>
                 Food spend
               </button>
               <button type="button" onClick={() => {
-                const question = "Can I afford a $15 meal today?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("Can I afford a $15 meal today?");
               }}>
-                Can I afford $15 meal?
+                Afford $15 meal?
               </button>
               <button type="button" onClick={() => {
-                const question = "Can I afford a $40 dinner today?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("Can I afford a $40 dinner today?");
               }}>
-                Can I afford $40 dinner?
+                Afford $40 dinner?
               </button>
               <button type="button" onClick={() => {
-                const question = "How much are my subscriptions?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("How much are my subscriptions?");
               }}>
                 Subscription total
               </button>
               <button type="button" onClick={() => {
-                const question = "What is my next low balance point?";
-                const answer = askFinanceAssistant(question, transactions, subscriptions, settings, forecastData);
-                setChat((c) => [...c, { role: "user", text: question }, { role: "assistant", text: answer }]);
+                void askAssistant("What is my next low balance point?");
               }}>
                 Next low point
+              </button>
+            </div>
+            <div className="assistant-input ai-input-wrap">
+              <input
+                value={assistantQuestion}
+                onChange={(e) => setAssistantQuestion(e.target.value)}
+                placeholder="Ask anything about your finance data..."
+              />
+              <button
+                type="button"
+                disabled={assistantBusy}
+                onClick={() => {
+                  if (!assistantQuestion.trim()) return;
+                  const question = assistantQuestion.trim();
+                  setAssistantQuestion("");
+                  void askAssistant(question);
+                }}
+              >
+                {assistantBusy ? "Thinking..." : "Send"}
               </button>
             </div>
           </motion.section>

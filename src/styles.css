@@ -100,11 +100,13 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   gap: 8px;
 }
 .news-live-dot {
+  border: 0;
   border-radius: 999px;
   font-size: 11px;
   padding: 4px 8px;
   color: #0a84ff;
   background: #e8f2ff;
+  cursor: pointer;
 }
 .news-hot-item {
   border: 0;
@@ -336,12 +338,12 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   right: 14px;
   bottom: calc(148px + env(safe-area-inset-bottom));
   width: min(430px, calc(100% - 28px));
-  border-radius: 28px;
-  padding: 10px;
-  background: linear-gradient(180deg, #ffffffea 0%, #f7f8fce8 100%);
-  border: 1px solid #ffffffd6;
-  backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 24px 48px #1418212b;
+  border-radius: 30px;
+  padding: 10px 10px 12px;
+  background: linear-gradient(180deg, #ffffffef 0%, #f4f7fcef 100%);
+  border: 1px solid #ffffffd9;
+  backdrop-filter: blur(30px) saturate(190%);
+  box-shadow: 0 22px 56px #1418212e;
   z-index: 26;
 }
 .ai-chat::before {
@@ -353,26 +355,64 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   background: #d2d5dd;
   margin: 2px auto 10px;
 }
-.ai-chat .row {
-  padding: 0 4px 10px;
-  border-bottom: 1px solid #dfe3ed;
+.ai-chat-head {
+  padding: 2px 4px 10px;
+  border-bottom: 1px solid #dbe2ef;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
-.ai-chat .row h3 {
+.ai-chat-kicker {
+  margin: 0 0 2px;
+  font-size: 11px;
+  color: #6c7382;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.ai-chat-head h3 {
   font-size: 17px;
   letter-spacing: -0.01em;
 }
-.ai-chat .row button {
+.ai-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-status-pill {
+  font-size: 11px;
+  color: #0a84ff;
+  background: #eaf2ff;
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+.ai-engine-pill {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+.ai-engine-pill.connected {
+  color: #14723f;
+  background: #e7f7ee;
+}
+.ai-engine-pill.fallback {
+  color: #9b4a13;
+  background: #fff2e7;
+}
+.ai-chat-head button {
   background: transparent;
   color: #0a84ff;
   padding: 6px 8px;
   border-radius: 10px;
+  border: 0;
+  cursor: pointer;
 }
 .ai-chat-log {
   margin-top: 10px;
-  max-height: 300px;
+  max-height: 270px;
   overflow: auto;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding: 4px;
 }
 .ai-bubble {
@@ -385,7 +425,7 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 }
 .ai-bubble.assistant {
   justify-self: start;
-  background: #eff2f8;
+  background: #edf2fb;
   color: #232734;
   border-top-left-radius: 8px;
 }
@@ -395,30 +435,56 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   justify-self: end;
   border-top-right-radius: 8px;
 }
-.ai-chat .assistant-input {
-  margin-top: 10px;
-  padding: 6px;
-  border-radius: 16px;
-  background: #eceff5;
+.ai-bubble.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
-.ai-chat .assistant-input input {
-  border: 0;
-  background: #fff;
-  border-radius: 12px;
+.ai-bubble.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #8892a5;
+  animation: aiTyping 1s infinite ease-in-out;
 }
-.ai-chat .assistant-input button {
-  border-radius: 12px;
-  padding: 10px 14px;
-}
+.ai-bubble.typing span:nth-child(2) { animation-delay: 0.12s; }
+.ai-bubble.typing span:nth-child(3) { animation-delay: 0.24s; }
 .ai-chat .assistant-quick {
-  margin-top: 10px;
+  margin-top: 8px;
   padding: 2px 2px 4px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.ai-chat .assistant-quick::-webkit-scrollbar { display: none; }
 .ai-chat .assistant-quick button {
   background: #ffffff;
   border: 1px solid #d9deea;
   color: #3a3f4a;
-  padding: 7px 12px;
+  padding: 8px 12px;
+  white-space: nowrap;
+  border-radius: 999px;
+}
+.ai-input-wrap {
+  margin-top: 8px;
+  padding: 6px;
+  border-radius: 16px;
+  background: #e9eef6;
+}
+.ai-input-wrap input {
+  border: 0;
+  background: #fff;
+  border-radius: 12px;
+}
+.ai-input-wrap button {
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+@keyframes aiTyping {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-2px); opacity: 1; }
 }
 .plan-row { margin-top: 12px; display: grid; gap: 8px; }
 .plan-track { height: 10px; background: #ebedf2; border-radius: 999px; overflow: hidden; }
