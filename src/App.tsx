@@ -25,10 +25,11 @@ type TaskPriority = "high" | "medium" | "low";
 type RoutineDaySnapshot = {
   timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
   tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
-  meals: Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>;
+  meals: Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>;
   ritualEnergy: number;
   dayRating: 1 | 2 | 3 | 4 | 5 | null;
 };
+type MealGroup = "Breakfast" | "Lunch" | "Dinner" | "Snacks";
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -72,29 +73,20 @@ function App() {
   const [timelineSortAsc, setTimelineSortAsc] = useState(true);
   const [timelineEvents, setTimelineEvents] = useState<Array<{ id: number; title: string; hour: number; category: TimelineCategory }>>([]);
   const [timelineTitle, setTimelineTitle] = useState("");
-  const [timelineHour, setTimelineHour] = useState("9");
-  const [timelineCategory, setTimelineCategory] = useState<TimelineCategory>("work");
   const [routineReminderTitle, setRoutineReminderTitle] = useState("Routine reminder");
   const [routineReminderBody, setRoutineReminderBody] = useState("Time to review your routine and next priority.");
   const [routineReminderDelaySec, setRoutineReminderDelaySec] = useState("1800");
-  const [mealName, setMealName] = useState("");
-  const [meals, setMeals] = useState<Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>>([
-    { id: 1, name: "Breakfast", planned: false, done: false, calories: "" },
-    { id: 2, name: "Lunch", planned: false, done: false, calories: "" },
-    { id: 3, name: "Dinner", planned: false, done: false, calories: "" },
-  ]);
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
+  const [coachNudgesEnabled, setCoachNudgesEnabled] = useState(true);
+  const [showReminderSheet, setShowReminderSheet] = useState(false);
+  const [meals, setMeals] = useState<Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>>([]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
-  const [taskCategory, setTaskCategory] = useState<TimelineCategory>("work");
-  const [taskFilter, setTaskFilter] = useState<"all" | "open" | "done">("all");
-  const [taskCategoryFilter, setTaskCategoryFilter] = useState<"all" | TimelineCategory>("all");
   const [reflectionOne, setReflectionOne] = useState("");
   const [reflectionTwo, setReflectionTwo] = useState("");
   const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [dayClosed, setDayClosed] = useState(false);
   const [routineHydrated, setRoutineHydrated] = useState(false);
-  const [routineHistory, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
+  const [, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
   const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
@@ -149,7 +141,7 @@ function App() {
         ritualEnergy: number;
         timelineSortAsc: boolean;
         timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
-        meals: Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>;
+        meals: Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>;
         tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
         reflectionOne: string;
         reflectionTwo: string;
@@ -416,61 +408,18 @@ function App() {
     }
     return streak;
   }, [transactions]);
-  const ritualCompletion = useMemo(
-    () => ([
-      ritualReview.trim().length > 0,
-      [ritualPriorityOne, ritualPriorityTwo, ritualPriorityThree].filter((v) => v.trim().length > 0).length === 3,
-      ritualIntention.trim().length > 0,
-      ritualAvoid.trim().length > 0,
-      ritualEnergy >= 1 && ritualEnergy <= 5,
-    ]),
-    [ritualReview, ritualPriorityOne, ritualPriorityTwo, ritualPriorityThree, ritualIntention, ritualAvoid, ritualEnergy],
-  );
-  const ritualDoneCount = useMemo(() => ritualCompletion.filter(Boolean).length, [ritualCompletion]);
-  const ritualProgress = useMemo(
-    () => (ritualDoneCount / ritualCompletion.length) * 100,
-    [ritualDoneCount, ritualCompletion.length],
-  );
   const sortedTimelineEvents = useMemo(() => {
     const copy = [...timelineEvents];
     copy.sort((a, b) => timelineSortAsc ? a.hour - b.hour : b.hour - a.hour);
     return copy;
   }, [timelineEvents, timelineSortAsc]);
-  const yesterdayKey = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return format(d, "yyyy-MM-dd");
-  }, []);
-  const yesterdayRoutine = routineHistory[yesterdayKey];
-  const repeatedTimelineTitles = useMemo(() => {
-    if (!yesterdayRoutine) return [];
-    const today = new Set(timelineEvents.map((e) => e.title.trim().toLowerCase()));
-    return yesterdayRoutine.timelineEvents
-      .filter((e) => today.has(e.title.trim().toLowerCase()))
-      .map((e) => e.title);
-  }, [timelineEvents, yesterdayRoutine]);
-  const recommendedFromYesterday = useMemo(() => {
-    if (!yesterdayRoutine) return [];
-    const today = new Set(timelineEvents.map((e) => e.title.trim().toLowerCase()));
-    return yesterdayRoutine.timelineEvents.filter((e) => !today.has(e.title.trim().toLowerCase())).slice(0, 3);
-  }, [timelineEvents, yesterdayRoutine]);
-  const timelineHours = useMemo(() => Array.from({ length: 17 }, (_, idx) => idx + 6), []);
   const mealStats = useMemo(() => {
-    const planned = meals.filter((m) => m.planned).length;
+    const planned = meals.length;
     const completed = meals.filter((m) => m.done).length;
     const totalCalories = meals.reduce((acc, m) => acc + (Number(m.calories) || 0), 0);
     const completion = planned > 0 ? Math.round((completed / planned) * 100) : 0;
     return { planned, completed, totalCalories, completion };
   }, [meals]);
-  const filteredTasks = useMemo(
-    () => tasks.filter((t) => {
-      if (taskFilter === "open" && t.done) return false;
-      if (taskFilter === "done" && !t.done) return false;
-      if (taskCategoryFilter !== "all" && t.category !== taskCategoryFilter) return false;
-      return true;
-    }),
-    [tasks, taskFilter, taskCategoryFilter],
-  );
   const doneTasks = useMemo(() => tasks.filter((t) => t.done).length, [tasks]);
   const overallScore = useMemo(() => {
     const taskPct = tasks.length ? doneTasks / tasks.length : 0;
@@ -721,6 +670,10 @@ function App() {
     });
   };
   const scheduleRoutineReminder = async () => {
+    if (!remindersEnabled) {
+      setPushStatusDetail("Enable reminders toggle first.");
+      return;
+    }
     if (notifState !== "granted") {
       setPushStatusDetail("Enable notifications first.");
       return;
@@ -746,8 +699,13 @@ function App() {
       return;
     }
     setPushStatusDetail(`Routine reminder scheduled in ${Math.floor(delaySec / 60)} min.`);
+    setShowReminderSheet(true);
   };
   const sendAiNotification = async () => {
+    if (!coachNudgesEnabled) {
+      setPushStatusDetail("Enable Coach nudges toggle first.");
+      return;
+    }
     if (notifState !== "granted") {
       setPushStatusDetail("Enable notifications first.");
       return;
@@ -888,6 +846,11 @@ function App() {
     }, 1000);
     return () => window.clearInterval(id);
   }, [scheduledNotifAt]);
+  useEffect(() => {
+    if (!showReminderSheet) return;
+    const id = window.setTimeout(() => setShowReminderSheet(false), 2200);
+    return () => window.clearTimeout(id);
+  }, [showReminderSheet]);
   useEffect(() => {
     return () => {
       if (scheduledNotifTimeoutRef.current) {
@@ -1248,304 +1211,104 @@ function App() {
           <div className="routine-layout">
             <section className="card routine-card routine-card-equal">
               <div className="row">
-                <h3>Morning ritual</h3>
-                <span className="badge">{ritualDoneCount}/5 done</span>
+                <h3>Top priorities</h3>
+                <span className="badge">{tasks.filter((t) => t.done).length}/{tasks.length} done</span>
               </div>
-              <p className="muted">5-step guided planning session.</p>
-              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${ritualProgress}%` }} /></div>
-              <label className="routine-step-label">
-                <span className="routine-step-title">1. Review yesterday</span>
-                <textarea value={ritualReview} onChange={(e) => setRitualReview(e.target.value)} rows={2} placeholder="What worked well yesterday?" />
-              </label>
-              <div className="routine-step-label">
-                <span className="routine-step-title">2. Set top 3 priorities</span>
-                <div className="routine-priority-grid">
-                  <input value={ritualPriorityOne} onChange={(e) => setRitualPriorityOne(e.target.value)} placeholder="Priority 1" />
-                  <input value={ritualPriorityTwo} onChange={(e) => setRitualPriorityTwo(e.target.value)} placeholder="Priority 2" />
-                  <input value={ritualPriorityThree} onChange={(e) => setRitualPriorityThree(e.target.value)} placeholder="Priority 3" />
-                </div>
-              </div>
-              <label className="routine-step-label">
-                <span className="routine-step-title">3. Write daily intention</span>
-                <input value={ritualIntention} onChange={(e) => setRitualIntention(e.target.value)} placeholder="How do you want to show up today?" />
-              </label>
-              <label className="routine-step-label">
-                <span className="routine-step-title">4. List things to avoid</span>
-                <input value={ritualAvoid} onChange={(e) => setRitualAvoid(e.target.value)} placeholder="Distractions or habits to avoid" />
-              </label>
-              <label className="routine-step-label">
-                <span className="routine-step-title">5. Rate energy level ({ritualEnergy}/5)</span>
-                <input type="range" min={1} max={5} step={1} value={ritualEnergy} onChange={(e) => setRitualEnergy(Number(e.target.value))} />
-              </label>
-              <div className="routine-checkline">
-                {["Review", "Top 3", "Intention", "Avoid", "Energy"].map((name, idx) => (
-                  <span key={name} className={`routine-check-pill ${ritualCompletion[idx] ? "done" : ""}`}>{name}</span>
-                ))}
-              </div>
-            </section>
-
-            <section className="card routine-card routine-card-equal">
-              <div className="row">
-                <h3>Visual day timeline</h3>
-                <button type="button" className="ghost-btn" onClick={() => setTimelineSortAsc((v) => !v)}>
-                  Sort: {timelineSortAsc ? "earliest" : "latest"}
-                </button>
-              </div>
-              <p className="muted">Plan your day in blocks. Tap one suggestion or add a custom block.</p>
-              <div className="timeline-memory">
-                {!yesterdayRoutine && <p className="muted">No yesterday history yet. Start adding blocks and I will learn your pattern.</p>}
-                {yesterdayRoutine && (
-                  <>
-                    <p className="muted">
-                      Yesterday: {yesterdayRoutine.timelineEvents.length} blocks, {yesterdayRoutine.tasks.filter((t) => t.done).length}/{yesterdayRoutine.tasks.length} tasks done, meal completion {Math.round((yesterdayRoutine.meals.filter((m) => m.done).length / Math.max(1, yesterdayRoutine.meals.filter((m) => m.planned).length)) * 100)}%.
-                    </p>
-                    {repeatedTimelineTitles.length > 0 && (
-                      <p className="muted timeline-recommend">You repeated: {repeatedTimelineTitles.slice(0, 3).join(", ")}. Keep this rhythm.</p>
-                    )}
-                    {recommendedFromYesterday.length > 0 && (
-                      <div className="timeline-repeat-list">
-                        {recommendedFromYesterday.map((event) => (
-                          <button
-                            key={`${event.id}-${event.title}`}
-                            type="button"
-                            className="ghost-btn"
-                            onClick={() => setTimelineEvents((prev) => [...prev, { ...event, id: Date.now() + Math.floor(Math.random() * 1000) }])}
-                          >
-                            Add "{event.title}"
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              <div className="timeline-add-card">
-                <div className="timeline-add-form">
-                  <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add event" />
-                  <div className="timeline-inline-fields">
-                    <input type="number" min={6} max={22} value={timelineHour} onChange={(e) => setTimelineHour(e.target.value)} />
-                    <select value={timelineCategory} onChange={(e) => setTimelineCategory(e.target.value as TimelineCategory)}>
-                      <option value="work">Work</option>
-                      <option value="health">Health</option>
-                      <option value="personal">Personal</option>
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const hour = Number(timelineHour);
-                      if (!timelineTitle.trim() || hour < 6 || hour > 22) return;
-                      setTimelineEvents((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), hour, category: timelineCategory }]);
-                      setTimelineTitle("");
-                    }}
-                  >
-                    Add block
-                  </button>
-                </div>
-              </div>
-              <div className="timeline-list">
-                {timelineHours.map((hour) => {
-                  const atHour = sortedTimelineEvents.filter((event) => event.hour === hour);
-                  return (
-                    <div key={hour} className={`timeline-hour ${hour === currentHour ? "current" : ""}`}>
-                      <div className="timeline-hour-label">
-                        {hour === 12 ? "12pm" : hour > 12 ? `${hour - 12}pm` : `${hour}am`}
-                        {hour === currentHour && <span className="timeline-now">Now</span>}
-                      </div>
-                      <div className="timeline-hour-events">
-                        {atHour.length === 0 && <p className="muted">-</p>}
-                        {atHour.map((event) => (
-                          <div key={event.id} className={`timeline-event ${event.category}`}>
-                            <span>{event.title}</span>
-                            <button type="button" onClick={() => setTimelineEvents((prev) => prev.filter((x) => x.id !== event.id))}>Delete</button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {timelineEvents.length === 0 && <p className="muted routine-empty">No events yet. Add your first block to map your day.</p>}
-            </section>
-
-            <section className="card routine-card routine-card-equal">
-              <div className="row">
-                <h3>Routine reminders</h3>
-                <span className="badge">Push</span>
-              </div>
-              <p className="muted">Schedule reminders and get Coach Zero notifications on your phone.</p>
-              <div className="routine-reminder-form">
-                <input
-                  value={routineReminderTitle}
-                  onChange={(e) => setRoutineReminderTitle(e.target.value)}
-                  placeholder="Reminder title"
-                />
-                <textarea
-                  value={routineReminderBody}
-                  onChange={(e) => setRoutineReminderBody(e.target.value)}
-                  rows={2}
-                  placeholder="Reminder message"
-                />
-                <div className="routine-reminder-row">
-                  <input
-                    type="number"
-                    min={60}
-                    max={86400}
-                    value={routineReminderDelaySec}
-                    onChange={(e) => setRoutineReminderDelaySec(e.target.value)}
-                    placeholder="Delay in seconds"
-                  />
-                  <button type="button" onClick={() => { void scheduleRoutineReminder(); }}>
-                    Schedule reminder
-                  </button>
-                </div>
-              </div>
-              <button type="button" className="ghost-btn" onClick={() => { void sendAiNotification(); }}>
-                Send latest Coach Zero message
-              </button>
-            </section>
-
-            <section className="card routine-card">
-              <div className="row">
-                <h3>Meal planner</h3>
-                <span className="badge">{mealStats.completion}%</span>
-              </div>
-              <p className="muted">Plan meals, mark completed, and track calories for the day.</p>
-              <div className="meal-add-row">
-                <input value={mealName} onChange={(e) => setMealName(e.target.value)} placeholder="Add meal (e.g. Snack)" />
+              <p className="muted">Focus on a few high-impact items for today.</p>
+              <div className="priority-add-row">
+                <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add priority" />
                 <button
                   type="button"
                   onClick={() => {
-                    if (!mealName.trim()) return;
-                    setMeals((prev) => [...prev, { id: Date.now(), name: mealName.trim(), planned: true, done: false, calories: "" }]);
-                    setMealName("");
+                    if (!timelineTitle.trim()) return;
+                    setTasks((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), priority: "high", category: "work", done: false }]);
+                    setTimelineTitle("");
                   }}
                 >
                   Add
                 </button>
               </div>
-              <div className="meal-grid">
-                {meals.map((meal) => (
-                  <article key={meal.id} className="meal-item">
-                    <div className="meal-head">
-                      <strong>{meal.name}</strong>
-                      <button type="button" className="ghost-btn" onClick={() => setMeals((prev) => prev.filter((m) => m.id !== meal.id))}>Delete</button>
-                    </div>
-                    <div className="meal-toggle-row">
-                      <label className="routine-check-item">
-                        <input type="checkbox" checked={meal.planned} onChange={() => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, planned: !m.planned } : m))} />
-                        <span>Planned</span>
-                      </label>
-                      <label className="routine-check-item">
-                        <input type="checkbox" checked={meal.done} onChange={() => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, done: !m.done } : m))} />
-                        <span>Done</span>
-                      </label>
-                    </div>
-                    <div className="meal-calorie-row">
-                      <input
-                        type="number"
-                        min={0}
-                        value={meal.calories}
-                        onChange={(e) => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, calories: e.target.value } : m))}
-                        placeholder="Calories"
-                      />
-                    </div>
-                  </article>
-                ))}
-              </div>
-              <p className="muted">Planned: {mealStats.planned} · Done: {mealStats.completed} · Calories: {mealStats.totalCalories}</p>
-              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${mealStats.completion}%` }} /></div>
-            </section>
-
-            <section className="card routine-card">
-              <div className="row">
-                <h3>Task manager</h3>
-                <span className="badge">{doneTasks}/{tasks.length} done</span>
-              </div>
-              <div className="routine-inline-form">
-                <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Add task" />
-                <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-                <select value={taskCategory} onChange={(e) => setTaskCategory(e.target.value as TimelineCategory)}>
-                  <option value="work">Work</option>
-                  <option value="personal">Personal</option>
-                  <option value="health">Health</option>
-                </select>
-                <button type="button" onClick={() => {
-                  if (!taskTitle.trim()) return;
-                  setTasks((prev) => [...prev, { id: Date.now(), title: taskTitle.trim(), priority: taskPriority, category: taskCategory, done: false }]);
-                  setTaskTitle("");
-                }}>Add</button>
-              </div>
-              <div className="task-filter-row">
-                <button type="button" className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All</button>
-                <button type="button" className={taskFilter === "open" ? "active" : ""} onClick={() => setTaskFilter("open")}>Open</button>
-                <button type="button" className={taskFilter === "done" ? "active" : ""} onClick={() => setTaskFilter("done")}>Done</button>
-                <button type="button" className={taskCategoryFilter === "all" ? "active" : ""} onClick={() => setTaskCategoryFilter("all")}>Any tag</button>
-                <button type="button" className={taskCategoryFilter === "work" ? "active" : ""} onClick={() => setTaskCategoryFilter("work")}>Work</button>
-                <button type="button" className={taskCategoryFilter === "personal" ? "active" : ""} onClick={() => setTaskCategoryFilter("personal")}>Personal</button>
-                <button type="button" className={taskCategoryFilter === "health" ? "active" : ""} onClick={() => setTaskCategoryFilter("health")}>Health</button>
-              </div>
-              {tasks.length === 0 && <p className="muted routine-empty">No tasks yet. Add tasks and organize your day by priority and tag.</p>}
-              {filteredTasks.map((task) => (
+              {tasks.length === 0 && <p className="muted routine-empty">No priorities yet. Add 1-3 tasks for today.</p>}
+              {tasks.map((task) => (
                 <div key={task.id} className="routine-row">
                   <label className="routine-check-item">
                     <input type="checkbox" checked={task.done} onChange={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: !t.done } : t))} />
                     <span>{task.title}</span>
                   </label>
-                  <span className={`task-meta ${task.priority}`}>{task.priority} · {task.category}</span>
                   <button type="button" className="ghost-btn" onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}>Delete</button>
                 </div>
               ))}
             </section>
 
-            <section className="card routine-card">
-              <div className="row">
-                <h3>End-of-day shutdown</h3>
-                <span className="badge">Score {overallScore}%</span>
+
+            <section className="card routine-card routine-card-equal routine-reminders-card">
+              <p className="routine-section-kicker">REMINDERS</p>
+              <div className="routine-reminder-group">
+                <article className="routine-reminder-item">
+                  <div className="routine-reminder-left">
+                    <span className="routine-reminder-icon">🔔</span>
+                    <div>
+                      <h3>Routine reminder</h3>
+                      <p className="muted">Quick reminders for your day rhythm.</p>
+                    </div>
+                  </div>
+                  <label className="ios-switch">
+                    <input type="checkbox" checked={remindersEnabled} onChange={(e) => setRemindersEnabled(e.target.checked)} />
+                    <span />
+                  </label>
+                </article>
+                <article className="routine-reminder-item">
+                  <div className="routine-reminder-left">
+                    <span className="routine-reminder-icon coach">✨</span>
+                    <div>
+                      <h3>Coach Zero nudges</h3>
+                      <p className="muted">Push the latest AI message to your phone.</p>
+                    </div>
+                  </div>
+                  <label className="ios-switch">
+                    <input type="checkbox" checked={coachNudgesEnabled} onChange={(e) => setCoachNudgesEnabled(e.target.checked)} />
+                    <span />
+                  </label>
+                </article>
+                <article className="routine-reminder-item">
+                  <div className="routine-reminder-left">
+                    <span className="routine-reminder-icon time">⏰</span>
+                    <div>
+                      <h3>Schedule</h3>
+                      <p className="muted">Choose when this reminder should fire.</p>
+                    </div>
+                  </div>
+                  <span className="routine-chevron">›</span>
+                </article>
               </div>
-              <p className="muted">Tasks done: {doneTasks}/{tasks.length} · Meal plan: {mealStats.completion}%</p>
-              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${overallScore}%` }} /></div>
-              <h4>Incomplete tasks</h4>
-              {tasks.filter((t) => !t.done).length === 0 && <p className="muted">All tasks completed today.</p>}
-              {tasks.filter((t) => !t.done).map((task) => (
-                <div key={task.id} className="routine-row">
-                  <span>{task.title}</span>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: false, title: `${t.title} (tomorrow)` } : t))}
-                  >
-                    Move to tomorrow
-                  </button>
+              <div className="routine-reminder-form">
+                <input value={routineReminderTitle} onChange={(e) => setRoutineReminderTitle(e.target.value)} placeholder="Reminder title" />
+                <textarea value={routineReminderBody} onChange={(e) => setRoutineReminderBody(e.target.value)} rows={2} placeholder="Reminder message" />
+                <div className="routine-reminder-row">
+                  <select value={routineReminderDelaySec} onChange={(e) => setRoutineReminderDelaySec(e.target.value)}>
+                    <option value="900">In 15 minutes</option>
+                    <option value="1800">In 30 minutes</option>
+                    <option value="3600">In 1 hour</option>
+                    <option value="7200">In 2 hours</option>
+                    <option value="28800">Tonight (8 hours)</option>
+                  </select>
+                  <button type="button" onClick={() => { void scheduleRoutineReminder(); }}>Save and schedule</button>
                 </div>
-              ))}
-              <label>Reflection prompt 1: What went well today?
-                <textarea value={reflectionOne} onChange={(e) => setReflectionOne(e.target.value)} rows={2} />
-              </label>
-              <label>Reflection prompt 2: What will I improve tomorrow?
-                <textarea value={reflectionTwo} onChange={(e) => setReflectionTwo(e.target.value)} rows={2} />
-              </label>
-              <div className="day-rating-row">
-                {[1, 2, 3, 4, 5].map((rate) => (
-                  <button key={rate} type="button" className={dayRating === rate ? "active" : ""} onClick={() => setDayRating(rate as 1 | 2 | 3 | 4 | 5)}>
-                    {rate}
-                  </button>
-                ))}
               </div>
-              <button type="button" className="close-day-btn" onClick={() => setDayClosed(true)}>
-                Close the day
+              <button type="button" className="ghost-btn" onClick={() => { void sendAiNotification(); }}>
+                Notify with Coach Zero
               </button>
-              {dayClosed && (
-                <div className="routine-celebration">
-                  <h4>Day closed. Great work.</h4>
-                  <p className="muted">You stayed intentional today. Keep the streak alive tomorrow.</p>
-                </div>
-              )}
             </section>
+            <AnimatePresence>
+              {showReminderSheet && (
+                <motion.div className="routine-confirm-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                  <motion.div className="routine-confirm-sheet" initial={{ y: 160 }} animate={{ y: 0 }} exit={{ y: 160 }}>
+                    <h4>Reminder Scheduled</h4>
+                    <p className="muted">{routineReminderTitle} will notify you in {Math.max(1, Math.round(Number(routineReminderDelaySec) / 60))} min.</p>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
