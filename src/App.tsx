@@ -18,7 +18,7 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Settings: { icon: "settings", label: "Settings" },
 };
 const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
-  { role: "assistant", text: "I am your Zero AI assistant. I use your real balance, salary plan, bills, and spending habits to give personal advice." },
+  { role: "assistant", text: "I am Coach Zero. Ask me what to do today with your money." },
 ];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
@@ -42,6 +42,7 @@ function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [assistantEngineReason, setAssistantEngineReason] = useState("");
+  const [showMorningBriefing, setShowMorningBriefing] = useState(false);
   const [ritualReview, setRitualReview] = useState("");
   const [ritualPriorityOne, setRitualPriorityOne] = useState("");
   const [ritualPriorityTwo, setRitualPriorityTwo] = useState("");
@@ -101,6 +102,17 @@ function App() {
     }, 4500);
     return () => window.clearInterval(id);
   }, [newsItems]);
+  useEffect(() => {
+    if (!settings) return;
+    const key = `zero_morning_briefing_seen_${format(new Date(), "yyyy-MM-dd")}`;
+    const alreadySeen = localStorage.getItem(key);
+    if (alreadySeen) return;
+    const timer = window.setTimeout(() => {
+      setShowMorningBriefing(true);
+      localStorage.setItem(key, "1");
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [settings]);
 
   useEffect(() => {
     localStorage.setItem("zero_ai_chat_v1", JSON.stringify(chat));
@@ -336,6 +348,17 @@ function App() {
     return ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
   }, [latestNews]);
   const fallbackHeadline = newsItems[activeHeadlineIndex];
+  const coachSuggestions = useMemo(() => {
+    const items: string[] = [];
+    if (todayRemaining < 0) items.push(`Slow spending this morning. You are ${money(Math.abs(todayRemaining))} over today's target.`);
+    else items.push(`You are within budget with about ${money(todayRemaining)} left for today.`);
+    if (tasks.length > 0 && doneTasks < tasks.length) items.push(`Complete 1 priority task now (${doneTasks}/${tasks.length} done).`);
+    else if (tasks.length > 0) items.push("Great momentum: all planned tasks are completed.");
+    if (mealStats.planned > 0 && mealStats.completed < mealStats.planned) items.push(`Meal plan is ${mealStats.completed}/${mealStats.planned}. Prep next meal early.`);
+    if (dailyBriefing.nextBills > 0) items.push(`${dailyBriefing.nextBills} bill(s) due in the next 3 days. Keep a cash buffer.`);
+    if (fallbackHeadline) items.push(`News watch: ${fallbackHeadline.title}`);
+    return items.slice(0, 4);
+  }, [todayRemaining, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -1032,6 +1055,7 @@ function App() {
               <p className="settings-kicker">Financial profile</p>
               <h3>Money setup</h3>
               <div className="settings-input-grid">
+                <label>Name<input value={settings.profileName ?? ""} onChange={(e) => updateSettings({ profileName: e.target.value })} placeholder="e.g. Guled" /></label>
                 <label>Monthly salary<input type="number" value={settings.monthlySalary ?? 0} onChange={(e) => updateSettings({ monthlySalary: Number(e.target.value) })} /></label>
                 <label>Current balance<input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
                 <label>Monthly savings reserve<input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
@@ -1058,6 +1082,7 @@ function App() {
               <p className="settings-kicker">Maintenance</p>
               <h3>App tools</h3>
               <div className="settings-actions settings-actions-stack">
+                <button type="button" className="ghost-btn" onClick={() => setShowMorningBriefing(true)}>Test morning briefing</button>
                 <button
                   type="button"
                   className="ghost-btn"
@@ -1145,6 +1170,66 @@ function App() {
             onClose={() => setShowCalendarDaySheet(false)}
           />
         )}
+        {showMorningBriefing && (
+          <motion.div className="sheet-wrap morning-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.section className="sheet morning-sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
+              <div className="row">
+                <div>
+                  <p className="home-kicker">Good morning</p>
+                  <h3>Coach Zero briefing</h3>
+                </div>
+                <button type="button" className="ghost-btn" onClick={() => setShowMorningBriefing(false)}>Close</button>
+              </div>
+              <p className="muted">Hi {settings.profileName?.trim() || "there"}, {format(new Date(), "EEEE, MMM d")} · here is your personalized daily briefing.</p>
+              <div className="morning-grid">
+                <article><p className="muted">Money target</p><strong>{money(safePerDay)}</strong></article>
+                <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
+                <article><p className="muted">Tasks</p><strong>{dailyBriefing.taskSignal}</strong></article>
+                <article><p className="muted">Meals</p><strong>{dailyBriefing.mealSignal}</strong></article>
+              </div>
+              <div className="morning-timeline">
+                <div className="row">
+                  <h4>Day timeline</h4>
+                  <span className="badge">{timelineEvents.length} events</span>
+                </div>
+                {sortedTimelineEvents.slice(0, 4).map((event) => (
+                  <div key={event.id} className={`timeline-event ${event.category}`}>
+                    <span>{event.hour === 12 ? "12pm" : event.hour > 12 ? `${event.hour - 12}pm` : `${event.hour}am`} · {event.title}</span>
+                  </div>
+                ))}
+                {sortedTimelineEvents.length === 0 && <p className="muted">No timeline blocks yet. Add your first focus block in Routine.</p>}
+              </div>
+              <div className="morning-news">
+                <div className="row">
+                  <h4>Hot Somaliland news</h4>
+                  <button type="button" className="ghost-btn" onClick={() => { void refreshNews(); }}>Refresh</button>
+                </div>
+                {!newsLoading && fallbackHeadline && (
+                  <button
+                    type="button"
+                    className="news-hot-item"
+                    onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
+                  >
+                    <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
+                    <strong className="news-hot-title">{(latestNewsIsFresh ? latestNews : fallbackHeadline).title}</strong>
+                    <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
+                  </button>
+                )}
+                {newsLoading && <p className="muted">Loading latest Somaliland updates...</p>}
+                {!newsLoading && !fallbackHeadline && <p className="muted">No headlines yet. Tap refresh to check again.</p>}
+              </div>
+              <div className="morning-news">
+                <div className="row">
+                  <h4>Coach Zero suggestions</h4>
+                </div>
+                <div className="suggestion-list">
+                  {coachSuggestions.map((tip) => <p key={tip} className="muted">- {tip}</p>)}
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowMorningBriefing(false)}>Start my day</button>
+            </motion.section>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <button className="ai-fab" type="button" onClick={() => setAssistantOpen((v) => !v)}>
@@ -1152,20 +1237,12 @@ function App() {
       </button>
       <AnimatePresence>
         {assistantOpen && (
-          <motion.section className="ai-chat" initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.96 }}>
+          <motion.section className="ai-chat" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}>
             <div className="ai-chat-head">
               <div className="ai-chat-title-wrap">
-                <p className="ai-chat-kicker">ZERO AI</p>
-                <h3>Money Coach</h3>
-                <p className="ai-chat-subtitle">Personalized answers from your balance, salary, and bills.</p>
-                <div className="ai-chat-status-row">
-                  <span className={`ai-engine-pill ${assistantEngine === "groq" ? "connected" : "fallback"}`}>
-                    {assistantEngine === "groq" ? "Live AI" : "Smart fallback"}
-                  </span>
-                  <span className={`ai-status-pill ${assistantBusy ? "busy" : "online"}`}>
-                    {assistantBusy ? "Thinking..." : "Ready"}
-                  </span>
-                </div>
+                <p className="ai-chat-kicker">COACH ZERO</p>
+                <h3>Coach Zero</h3>
+                <p className="ai-chat-subtitle">{assistantBusy ? "Thinking..." : "Ready when you are."}</p>
               </div>
               <div className="ai-chat-actions">
                 <button
@@ -1201,41 +1278,26 @@ function App() {
             </div>
             <div className="assistant-quick">
               <button type="button" onClick={() => {
-                void askAssistant("Where am I wasting money?");
+                void askAssistant("Give me today's plan in 3 steps.");
               }}>
-                Waste check
+                Today's plan
               </button>
               <button type="button" onClick={() => {
-                void askAssistant("How much did I spend on food?");
+                void askAssistant("Can I spend on a meal today?");
               }}>
-                Food spend
+                Meal check
               </button>
               <button type="button" onClick={() => {
-                void askAssistant("Can I afford a $15 meal today?");
+                void askAssistant("What should I avoid spending on today?");
               }}>
-                Afford $15 meal?
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("Can I afford a $40 dinner today?");
-              }}>
-                Afford $40 dinner?
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("How much are my subscriptions?");
-              }}>
-                Subscription total
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("What is my next low balance point?");
-              }}>
-                Next low point
+                Avoid list
               </button>
             </div>
             <div className="assistant-input ai-input-wrap">
               <input
                 value={assistantQuestion}
                 onChange={(e) => setAssistantQuestion(e.target.value)}
-                placeholder="Ask anything about your finance data..."
+                placeholder="Message Coach Zero..."
               />
               <button
                 type="button"
@@ -1247,7 +1309,7 @@ function App() {
                   void askAssistant(question);
                 }}
               >
-                {assistantBusy ? "Thinking..." : "Send"}
+                {assistantBusy ? "Thinking..." : "Ask"}
               </button>
             </div>
           </motion.section>
@@ -1507,6 +1569,7 @@ function IosIcon({
   if (name === "settings") return filled
     ? <svg viewBox="0 0 24 24"><path fill="currentColor" d="m21.1 13.3-.9-.5a8.6 8.6 0 0 0 0-1.6l1-.5a1 1 0 0 0 .4-1.3l-1-1.8a1 1 0 0 0-1.3-.4l-1 .4a7 7 0 0 0-1.4-.9l-.1-1.1a1 1 0 0 0-1-.9h-2a1 1 0 0 0-1 .9l-.1 1.1a7 7 0 0 0-1.4 1l-1-.5a1 1 0 0 0-1.3.4l-1 1.8a1 1 0 0 0 .4 1.3l1 .5a8.6 8.6 0 0 0 0 1.6l-1 .5a1 1 0 0 0-.4 1.3l1 1.8a1 1 0 0 0 1.3.4l1-.4a7 7 0 0 0 1.4.9l.1 1.1a1 1 0 0 0 1 .9h2a1 1 0 0 0 1-.9l.1-1.1a7 7 0 0 0 1.4-1l1 .5a1 1 0 0 0 1.3-.4l1-1.8a1 1 0 0 0-.4-1.3ZM12 15.5a3.5 3.5 0 1 1 0-7.1 3.5 3.5 0 0 1 0 7Z" /></svg>
     : <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" strokeWidth="1.8" /><path d="M19.4 14.2a1 1 0 0 0 .2 1.1l.1.1a1.2 1.2 0 0 1 0 1.7l-.5.5a1.2 1.2 0 0 1-1.7 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9v.2a1.2 1.2 0 0 1-1.2 1.2h-.7a1.2 1.2 0 0 1-1.2-1.2v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.2 1.2 0 0 1-1.7 0l-.5-.5a1.2 1.2 0 0 1 0-1.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6h-.2a1.2 1.2 0 0 1-1.2-1.2v-.7a1.2 1.2 0 0 1 1.2-1.2h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.2 1.2 0 0 1 0-1.7l.5-.5a1.2 1.2 0 0 1 1.7 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V5.5a1.2 1.2 0 0 1 1.2-1.2h.7a1.2 1.2 0 0 1 1.2 1.2v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.2 1.2 0 0 1 1.7 0l.5.5a1.2 1.2 0 0 1 0 1.7l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a1.2 1.2 0 0 1 1.2 1.2v.7a1.2 1.2 0 0 1-1.2 1.2h-.2a1 1 0 0 0-.9.6Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+  if (name === "ai") return <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.8c3.9 0 7 2.8 7 6.2 0 2-1.1 3.8-2.9 4.9v3.3a1 1 0 0 1-1.6.8l-2.1-1.6c-.2 0-.3 0-.4 0-3.9 0-7-2.8-7-6.2s3.1-6.2 7-6.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><circle cx="9" cy="10.1" r="1.1" fill="currentColor" /><circle cx="12" cy="10.1" r="1.1" fill="currentColor" /><circle cx="15" cy="10.1" r="1.1" fill="currentColor" /></svg>;
   if (name === "streak") return <svg viewBox="0 0 24 24" fill="none"><path d="M13.2 3.8c.3 2.5-.5 4-2.4 5.5-1.2 1-2.3 2.3-2.3 4.2 0 2.2 1.8 4 4 4 2.5 0 4.4-2 4.4-4.5 0-2.8-1.6-4.4-3.7-5.9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><path d="M12.3 10.6c.2 1.4-.2 2.3-1.2 3-.6.5-1 1.1-1 2 0 1.1.9 2 2 2 1.2 0 2.1-.9 2.1-2.2 0-1.4-.8-2.3-1.9-2.8" fill="currentColor" /></svg>;
   return <svg viewBox="0 0 24 24" fill="none"><path d="m12 4 1.9 3.8 4.1.6-3 2.9.7 4.1L12 13.4l-3.7 2 .7-4.1-3-2.9 4.1-.6L12 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /></svg>;
 }

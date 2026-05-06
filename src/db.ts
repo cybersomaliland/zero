@@ -29,6 +29,20 @@ class ZeroDB extends Dexie {
           }
         });
       });
+    this.version(3)
+      .stores({
+        transactions: "++id, date, type, category, createdAt",
+        subscriptions: "++id, nextBillingDate, cycle, createdAt",
+        settings: "id",
+        categoryRules: "++id, keyword, category, updatedAt",
+      })
+      .upgrade((tx) => {
+        return tx.table("settings").toCollection().modify((setting) => {
+          if (typeof setting.profileName !== "string") {
+            setting.profileName = "";
+          }
+        });
+      });
   }
 }
 
@@ -69,6 +83,7 @@ export async function seedIfEmpty() {
   if (!hasSettings) {
     await db.settings.put({
       id: 1,
+      profileName: "",
       monthlySalary: 0,
       currentBalance: 0,
       reservedSavings: 0,

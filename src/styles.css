@@ -739,6 +739,7 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   z-index: 26;
   display: flex;
   flex-direction: column;
+  transform: translateZ(0);
 }
 .ai-chat::before {
   content: "";
@@ -778,20 +779,14 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .ai-chat-subtitle {
   margin: 0;
   color: #6d7584;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
-}
-.ai-chat-status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
 }
 .ai-chat-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-direction: column;
+  flex-direction: row;
   justify-content: flex-start;
 }
 .ai-status-pill {
@@ -894,7 +889,7 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   background: #ffffff;
   border: 1px solid #d9deea;
   color: #3a3f4a;
-  padding: 8px 12px;
+  padding: 7px 11px;
   white-space: nowrap;
   border-radius: 999px;
 }
@@ -908,6 +903,8 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   border: 0;
   background: #fff;
   border-radius: 12px;
+  font-size: 16px;
+  line-height: 1.2;
 }
 .ai-input-wrap button {
   border-radius: 12px;
@@ -1009,6 +1006,43 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 }
 .sheet-wrap { position: fixed; inset: 0; background: #0000005f; display: grid; align-items: end; }
 .sheet { background: #fff; border-radius: 24px 24px 0 0; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
+.morning-wrap {
+  z-index: 40;
+  background: #0c122233;
+  backdrop-filter: blur(2px);
+}
+.morning-sheet {
+  max-height: min(88dvh, 760px);
+  overflow: auto;
+  border-radius: 28px 28px 0 0;
+  background: linear-gradient(180deg, #fffffffa, #f5f8ffef);
+}
+.morning-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.morning-grid article {
+  border-radius: 14px;
+  padding: 10px;
+  background: #f4f7fc;
+  box-shadow: inset 0 0 0 1px #e6ecf6;
+  display: grid;
+  gap: 3px;
+}
+.morning-timeline,
+.morning-news {
+  display: grid;
+  gap: 8px;
+  border-radius: 14px;
+  padding: 10px;
+  background: #f7f9fd;
+  box-shadow: inset 0 0 0 1px #e4ebf8;
+}
+.suggestion-list {
+  display: grid;
+  gap: 6px;
+}
 label { display: grid; gap: 6px; color: #33353a; font-size: 14px; }
 input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; padding: 10px 12px; background: #f8f9fb; font-size: 16px; }
 .bulk-input { min-height: 150px; resize: vertical; }

@@ -23,6 +23,7 @@ export type Subscription = {
 
 export type Settings = {
   id: number;
+  profileName?: string;
   monthlySalary: number;
   currentBalance: number;
   reservedSavings: number;
