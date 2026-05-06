@@ -324,16 +324,13 @@ function App() {
   const weeklySalaryAllocation = monthlySalary / 4.33;
   const monthlySavingsReserve = settings?.reservedSavings ?? 0;
   const weeklySavingsReserve = monthlySavingsReserve / 4.33;
-  const weeklyRealBalance = weeklySalaryAllocation + weeklyTransactionsNet - weeklyUpcomingSubs - weeklySavingsReserve;
   const monthlyRealBalance = realBalance + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
   const daysLeftInMonth = Math.max(
     1,
     differenceInCalendarDays(endOfMonth(new Date()), startOfDay(new Date())) + 1,
   );
   const weeklySafeToUse = Math.max(0, (monthlyRealBalance / daysLeftInMonth) * 7);
-  const daysLeftInWeek = Math.max(1, 7 - (new Date().getDay() === 0 ? 7 : new Date().getDay()) + 1);
-  const weeklyAllowanceBase = Math.max(0, Math.min(weeklySafeToUse, weeklyRealBalance));
-  const safePerDay = weeklyAllowanceBase / daysLeftInWeek;
+  const safePerDay = Math.max(0, monthlyRealBalance / daysLeftInMonth);
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
     () => (settings ? forecast(transactions, subscriptions, settings) : []),
@@ -387,10 +384,12 @@ function App() {
   );
   const selectedDayDailyAllowance = useMemo(() => {
     const selected = parseISO(selectedCalendarDay);
-    const selectedDayOfWeek = selected.getDay() === 0 ? 7 : selected.getDay();
-    const daysLeftFromSelectedDay = Math.max(1, 7 - selectedDayOfWeek + 1);
-    return weeklyAllowanceBase / daysLeftFromSelectedDay;
-  }, [selectedCalendarDay, weeklyAllowanceBase]);
+    const daysLeftFromSelectedDay = Math.max(
+      1,
+      differenceInCalendarDays(endOfMonth(selected), startOfDay(selected)) + 1,
+    );
+    return Math.max(0, monthlyRealBalance / daysLeftFromSelectedDay);
+  }, [selectedCalendarDay, monthlyRealBalance]);
   const todayKey = format(new Date(), "yyyy-MM-dd");
   const todaySpent = dailyBreakdown[todayKey]?.spent || 0;
   const todayRemaining = safePerDay - todaySpent;
@@ -1108,7 +1107,7 @@ function App() {
                 <h3>Daily allowance goal</h3>
                 <span className="goal-pill">{money(safePerDay)}</span>
               </div>
-              <p className="muted">Based on your current balance and weekly safe-to-use.</p>
+              <p className="muted">Based on your monthly real balance spread across remaining month days.</p>
               <div className="daily-goal-ring-wrap">
                 <div
                   className="daily-goal-ring"
