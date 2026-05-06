@@ -39,9 +39,7 @@ function App() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantBusy, setAssistantBusy] = useState(false);
-  const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">(
-    (import.meta as { env?: Record<string, string> }).env?.VITE_GROQ_API_KEY ? "groq" : "fallback",
-  );
+  const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
