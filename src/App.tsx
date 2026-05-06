@@ -28,6 +28,7 @@ function App() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
+  const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
     { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
   ]);
@@ -94,7 +95,8 @@ function App() {
   );
   const weeklySafeToUse = Math.max(0, (monthlyRealBalance / daysLeftInMonth) * 7);
   const daysLeftInWeek = Math.max(1, 7 - (new Date().getDay() === 0 ? 7 : new Date().getDay()) + 1);
-  const safePerDay = weeklySafeToUse / daysLeftInWeek;
+  const weeklyAllowanceBase = Math.max(0, Math.min(weeklySafeToUse, weeklyRealBalance));
+  const safePerDay = weeklyAllowanceBase / daysLeftInWeek;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
     () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: monthlySalary }) : []),
@@ -140,6 +142,19 @@ function App() {
       return acc;
     }, {});
   }, [transactions]);
+  const selectedDayTransactions = useMemo(
+    () =>
+      transactions
+        .filter((tx) => format(parseISO(tx.date), "yyyy-MM-dd") === selectedCalendarDay)
+        .sort((a, b) => +parseISO(b.date) - +parseISO(a.date)),
+    [transactions, selectedCalendarDay],
+  );
+  const selectedDayDailyAllowance = useMemo(() => {
+    const selected = parseISO(selectedCalendarDay);
+    const selectedDayOfWeek = selected.getDay() === 0 ? 7 : selected.getDay();
+    const daysLeftFromSelectedDay = Math.max(1, 7 - selectedDayOfWeek + 1);
+    return weeklyAllowanceBase / daysLeftFromSelectedDay;
+  }, [selectedCalendarDay, weeklyAllowanceBase]);
   const todayKey = format(new Date(), "yyyy-MM-dd");
   const todaySpent = dailyBreakdown[todayKey]?.spent || 0;
   const todayRemaining = safePerDay - todaySpent;
@@ -368,7 +383,7 @@ function App() {
                 <h3>Daily allowance goal</h3>
                 <span className="goal-pill">{money(safePerDay)}</span>
               </div>
-              <p className="muted">Spend gently today to stay on track for the week.</p>
+              <p className="muted">Based on your current balance and weekly safe-to-use.</p>
               <div className="daily-goal-ring-wrap">
                 <div
                   className="daily-goal-ring"
@@ -418,7 +433,10 @@ function App() {
                       key={cell.key}
                       type="button"
                       className={`calendar-cell ${cell.today ? "today" : ""} ${selectedCalendarDay === cell.key ? "selected" : ""}`}
-                      onClick={() => setSelectedCalendarDay(cell.key)}
+                      onClick={() => {
+                        setSelectedCalendarDay(cell.key);
+                        setShowCalendarDaySheet(true);
+                      }}
                     >
                       <span className="day">{cell.day}</span>
                       <span className={`amt ${cell.amount > 0 ? "spent" : ""}`}>
@@ -427,12 +445,6 @@ function App() {
                     </button>
                   ),
                 )}
-              </div>
-              <div className="calendar-detail">
-                <strong>{format(parseISO(selectedCalendarDay), "EEE, MMM d")}</strong>
-                <span className="muted">
-                  Spent {money(dailyBreakdown[selectedCalendarDay]?.spent || 0)} | Income {money(dailyBreakdown[selectedCalendarDay]?.income || 0)} | Tx {dailyBreakdown[selectedCalendarDay]?.count || 0}
-                </span>
               </div>
             </section>
           </div>
@@ -582,6 +594,15 @@ function App() {
               await addTransactionsBulk(rows);
               setShowBulkTx(false);
             }}
+          />
+        )}
+        {showCalendarDaySheet && (
+          <CalendarDaySheet
+            day={selectedCalendarDay}
+            dailyAllowance={selectedDayDailyAllowance}
+            breakdown={dailyBreakdown[selectedCalendarDay]}
+            transactions={selectedDayTransactions}
+            onClose={() => setShowCalendarDaySheet(false)}
           />
         )}
       </AnimatePresence>
@@ -803,6 +824,98 @@ function BulkTransactionSheet({
         {error && <p className="error-text">{error}</p>}
         <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save all</button></div>
       </motion.form>
+    </motion.div>
+  );
+}
+
+function CalendarDaySheet({
+  day,
+  dailyAllowance,
+  breakdown,
+  transactions,
+  onClose,
+}: {
+  day: string;
+  dailyAllowance: number;
+  breakdown: { spent: number; income: number; count: number } | undefined;
+  transactions: Array<{ amount: number; type: TxType; category: string; note?: string; date: string }>;
+  onClose: () => void;
+}) {
+  const spent = breakdown?.spent || 0;
+  const income = breakdown?.income || 0;
+  const count = breakdown?.count || 0;
+  const net = income - spent;
+  const overUnder = dailyAllowance - spent;
+  const needsImprovement = overUnder < 0;
+  const expenseTxCount = transactions.filter((tx) => tx.type === "expense").length;
+  const topCategory = transactions
+    .filter((tx) => tx.type === "expense")
+    .reduce<Record<string, number>>((acc, tx) => {
+      acc[tx.category] = (acc[tx.category] || 0) + Math.abs(tx.amount);
+      return acc;
+    }, {});
+  const topCategoryEntry = Object.entries(topCategory).sort((a, b) => b[1] - a[1])[0];
+
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.section className="sheet calendar-day-sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
+        <div className="row">
+          <h3>{format(parseISO(day), "EEEE, MMM d")}</h3>
+          <button type="button" className="ghost-btn" onClick={onClose}>Close</button>
+        </div>
+        <div className="snapshot-grid day-summary-grid">
+          <article><p className="muted">Spent</p><strong>{money(spent)}</strong></article>
+          <article><p className="muted">Income</p><strong>{money(income)}</strong></article>
+          <article><p className="muted">Net</p><strong className={net < 0 ? "negative" : "positive"}>{money(net)}</strong></article>
+        </div>
+        <div className="calendar-day-goal">
+          <p className="muted">Daily allowance goal that day</p>
+          <strong>{money(dailyAllowance)}</strong>
+        </div>
+        <div className="calendar-day-improve">
+          <h4>How to improve</h4>
+          {count === 0 ? (
+            <p className="muted">No spending recorded. Keep this momentum and avoid impulse purchases to protect the weekly budget.</p>
+          ) : (
+            <>
+              <p className="muted">
+                {needsImprovement
+                  ? `You were over the daily goal by ${money(Math.abs(overUnder))}.`
+                  : `You stayed under the goal by ${money(Math.abs(overUnder))}.`}
+              </p>
+              {topCategoryEntry && (
+                <p className="muted">
+                  Biggest spend category: <strong>{topCategoryEntry[0]}</strong> ({money(topCategoryEntry[1])}).
+                </p>
+              )}
+              <p className="muted">
+                Action plan: cap this category to about {money(Math.max(0, dailyAllowance * 0.4))} for similar days, and keep variable spending under {money(Math.max(0, dailyAllowance))}.
+              </p>
+              <p className="muted">
+                Quick target for next day: {expenseTxCount > 3 ? "combine small purchases into one planned spend" : "keep transaction count low and intentional"}.
+              </p>
+            </>
+          )}
+        </div>
+        <p className="muted">Transactions: {count}</p>
+        <div className="day-tx-list">
+          {transactions.length === 0 && <p className="muted">No transactions on this day.</p>}
+          {transactions.map((tx, idx) => {
+            const cat = getCategoryDefinition(tx.category || "General");
+            return (
+              <div key={`${tx.date}-${tx.category}-${idx}`} className="day-tx-item">
+                <div>
+                  <strong className="tx-category-badge" style={{ background: cat.color.bg, color: cat.color.text, boxShadow: `inset 0 0 0 1px ${cat.color.ring}` }}>
+                    {tx.category}
+                  </strong>
+                  <p className="muted">{tx.note || "No note"}</p>
+                </div>
+                <strong className={tx.type === "income" ? "positive" : "negative"}>{money(tx.amount)}</strong>
+              </div>
+            );
+          })}
+        </div>
+      </motion.section>
     </motion.div>
   );
 }

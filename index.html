@@ -10,15 +10,15 @@
     <style>
       @keyframes splashFloat {
         0%, 100% { transform: translateY(0px) scale(1); }
-        50% { transform: translateY(-4px) scale(1.02); }
+        50% { transform: translateY(-5px) scale(1.02); }
       }
-      @keyframes splashPulse {
-        0% { box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.3); }
-        100% { box-shadow: 0 0 0 22px rgba(10, 132, 255, 0); }
+      @keyframes splashGlow {
+        0%, 100% { opacity: 0.35; transform: scale(0.95); }
+        50% { opacity: 0.7; transform: scale(1.02); }
       }
-      @keyframes ringSpin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
+      @keyframes splashShimmer {
+        from { transform: translateX(-150%) skewX(-20deg); }
+        to { transform: translateX(260%) skewX(-20deg); }
       }
       #zero-splash {
         position: fixed;
@@ -27,55 +27,82 @@
         display: grid;
         place-items: center;
         background:
-          radial-gradient(circle at 24% 16%, #ffffffaa 0%, #ffffff00 40%),
-          radial-gradient(circle at 74% 88%, #c6dcff66 0%, #ffffff00 45%),
-          linear-gradient(180deg, #f6f8fc 0%, #eef2f8 100%);
+          radial-gradient(circle at 26% 18%, #ffffffa8 0%, #ffffff00 42%),
+          radial-gradient(circle at 76% 84%, #dbe7ff80 0%, #ffffff00 45%),
+          linear-gradient(180deg, #f8fafe 0%, #edf1f8 100%);
         transition: opacity 0.45s ease;
       }
       #zero-splash.hide {
         opacity: 0;
         pointer-events: none;
       }
-      .zero-splash-card {
-        width: 92px;
-        height: 92px;
-        border-radius: 24px;
+      .zero-splash-wrap {
+        position: relative;
         display: grid;
         place-items: center;
-        background: linear-gradient(145deg, #0a84ff, #005ad1);
-        box-shadow: 0 16px 34px rgba(10, 132, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+      .zero-splash-glow {
+        position: absolute;
+        width: 126px;
+        height: 126px;
+        border-radius: 34px;
+        background: radial-gradient(circle at 35% 20%, #8fa9ff80, #8fa9ff00 72%);
+        filter: blur(8px);
+        animation: splashGlow 2.4s ease-in-out infinite;
+      }
+      .zero-splash-card {
+        width: 102px;
+        height: 102px;
+        border-radius: 30px;
+        display: grid;
+        place-items: center;
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(145deg, #1f2937, #0b1220);
+        box-shadow: 0 16px 38px #0e16253b, inset 0 1px 0 #ffffff66;
         animation: splashFloat 2.2s ease-in-out infinite;
       }
-      .zero-splash-ring {
-        width: 48px;
-        height: 48px;
-        border-radius: 999px;
-        border: 8px solid rgba(255, 255, 255, 0.95);
-        border-left-color: rgba(255, 255, 255, 0.32);
-        animation: ringSpin 1.2s linear infinite;
-      }
-      .zero-splash-pulse {
+      .zero-splash-card::before {
+        content: "";
         position: absolute;
-        width: 96px;
-        height: 96px;
-        border-radius: 26px;
-        animation: splashPulse 1.5s ease-out infinite;
+        inset: 0;
+        border-radius: inherit;
+        border: 1px solid #ffffff26;
+      }
+      .zero-splash-card::after {
+        content: "";
+        position: absolute;
+        width: 44%;
+        height: 180%;
+        top: -36%;
+        left: -52%;
+        background: linear-gradient(180deg, #ffffff00 0%, #ffffff55 45%, #ffffff00 100%);
+        animation: splashShimmer 2.7s ease-in-out infinite;
+      }
+      .zero-splash-logo {
+        width: 52px;
+        height: 52px;
+        color: #f8fafc;
       }
       .zero-splash-title {
-        margin-top: 18px;
+        margin-top: 20px;
         font-family: "SF Pro Display", "Inter", "Segoe UI", sans-serif;
         font-weight: 700;
         letter-spacing: -0.02em;
-        color: #111317;
+        color: #0f172a;
       }
     </style>
   </head>
   <body>
     <div id="zero-splash" aria-hidden="true">
       <div>
-        <div style="position: relative; display:grid; place-items:center;">
-          <div class="zero-splash-pulse"></div>
-          <div class="zero-splash-card"><div class="zero-splash-ring"></div></div>
+        <div class="zero-splash-wrap">
+          <div class="zero-splash-glow"></div>
+          <div class="zero-splash-card">
+            <svg class="zero-splash-logo" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M70 78h116c7 0 12 5 12 12 0 4-2 8-5 10l-93 66h86c7 0 12 5 12 12s-5 12-12 12H70c-7 0-12-5-12-12 0-4 2-8 5-10l93-66H70c-7 0-12-5-12-12s5-12 12-12Z" fill="currentColor"/>
+            </svg>
+          </div>
         </div>
         <div class="zero-splash-title">Zero</div>
       </div>
