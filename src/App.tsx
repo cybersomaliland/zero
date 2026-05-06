@@ -585,8 +585,17 @@ function App() {
     if (periodic?.register) {
       await periodic.register("zero-daily-check", { minInterval: 24 * 60 * 60 * 1000 });
     }
+    await subscribeUser();
+  };
 
+  const subscribeUser = async () => {
+    if (!("serviceWorker" in navigator)) {
+      setPushConnected(false);
+      setPushStatusDetail("Service worker is not available on this browser/device.");
+      return;
+    }
     try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
       if (!("pushManager" in registration)) {
         setPushConnected(false);
         setPushStatusDetail("PushManager not available. On iPhone, install as Home Screen app and allow notifications.");
@@ -611,13 +620,11 @@ function App() {
           applicationServerKey: urlBase64ToUint8Array(String(keyData.publicKey)),
         });
       }
-      const syncRes = await fetch("/api/push/subscribe", {
+      const syncRes = await fetch("/api/save-subscription", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           subscription,
-          displayName: settings?.profileName?.trim() || "there",
-          upcomingCount: upcoming.length,
         }),
       });
       if (syncRes.ok) {
@@ -767,6 +774,10 @@ function App() {
     }
     setNotifState(Notification.permission as "default" | "granted" | "denied");
   }, []);
+  useEffect(() => {
+    if (notifState !== "granted") return;
+    void subscribeUser();
+  }, [notifState]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;

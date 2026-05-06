@@ -214,6 +214,18 @@ app.post("/api/push/subscribe", async (req, res) => {
   return res.status(200).json({ ok: true, sent });
 });
 
+app.post("/api/save-subscription", async (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const subscription = req.body?.subscription ?? req.body;
+  if (!subscription || typeof subscription.endpoint !== "string") {
+    return res.status(400).json({ error: "Missing valid subscription object" });
+  }
+  pushSubscriptions.set(subscription.endpoint, subscription);
+  return res.status(200).json({ ok: true, total: pushSubscriptions.size });
+});
+
 app.post("/api/push/unsubscribe", (req, res) => {
   const endpoint = String(req.body?.endpoint || "");
   if (!endpoint) {
@@ -237,6 +249,28 @@ app.post("/api/push/test", async (req, res) => {
     url: "/",
     tag: "zero-test",
   };
+  const targets = [...pushSubscriptions.values()];
+  if (targets.length === 0) {
+    return res.status(404).json({ error: "No active push subscriptions yet" });
+  }
+  const results = await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
+  return res.status(200).json({
+    ok: true,
+    sent: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+  });
+});
+
+app.post("/api/send-notification", async (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const title = String(req.body?.title || "").trim();
+  const body = String(req.body?.body || "").trim();
+  if (!title || !body) {
+    return res.status(400).json({ error: "title and body are required" });
+  }
+  const payload = { title, body, icon: "/icon.svg", url: "/" };
   const targets = [...pushSubscriptions.values()];
   if (targets.length === 0) {
     return res.status(404).json({ error: "No active push subscriptions yet" });
