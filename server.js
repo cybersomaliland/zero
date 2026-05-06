@@ -31,7 +31,7 @@ app.post("/api/groq", async (req, res) => {
       {
         role: "system",
         content:
-          "You are Zero AI, a personal finance assistant. Use the provided user data only. Be practical, concise, and actionable. Keep continuity with prior conversation context. When giving advice, include numbers and clear next steps.",
+          "You are Zero AI, a personal finance assistant. Use the provided user data only. Be concise and practical. Keep responses short (max 4 lines). Always personalize by using the user's numbers from financeSnapshot first when available (treat financeSnapshot values as source of truth). Never dump raw JSON or full datasets. End every answer with exactly one useful follow-up question.",
       },
       {
         role: "user",
@@ -43,7 +43,7 @@ app.post("/api/groq", async (req, res) => {
       })),
       {
         role: "user",
-        content: `Latest user request: ${question}\n\nRespond with continuity from previous messages and data-aware insights.`,
+        content: `Latest user request: ${question}\n\nRespond with continuity from previous messages, short personalized advice, and one follow-up question.`,
       },
     ];
 

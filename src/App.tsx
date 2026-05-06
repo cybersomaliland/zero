@@ -40,6 +40,7 @@ function App() {
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
+  const [assistantEngineReason, setAssistantEngineReason] = useState("");
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
@@ -296,12 +297,24 @@ function App() {
         subscriptions,
         settings,
         forecastData,
+        financeSnapshot: {
+          monthlyRealBalance,
+          weeklySafeToUse,
+          dailyAllowance: safePerDay,
+          todaySpent,
+          todayRemaining,
+          weeklySpent,
+          weeklyIncome,
+          weeklyUpcomingSubs,
+        },
       });
       setAssistantEngine("groq");
+      setAssistantEngineReason("");
       setChat((c) => [...c, { role: "assistant", text: answer }]);
-    } catch {
+    } catch (error) {
       const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
       setAssistantEngine("fallback");
+      setAssistantEngineReason(error instanceof Error ? error.message : "Unknown Groq error");
       setChat((c) => [...c, { role: "assistant", text: fallback }]);
     } finally {
       setAssistantBusy(false);
@@ -776,6 +789,9 @@ function App() {
                 <button type="button" onClick={() => setAssistantOpen(false)}>Close</button>
               </div>
             </div>
+            {assistantEngine === "fallback" && assistantEngineReason && (
+              <p className="ai-engine-reason muted">{assistantEngineReason}</p>
+            )}
             <div className="ai-chat-log">
               {chat.map((msg, i) => (
                 <p key={`${msg.role}-${i}`} className={`ai-bubble ${msg.role}`}>

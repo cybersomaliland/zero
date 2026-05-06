@@ -7,13 +7,31 @@ export async function askGroqFinanceAssistant(params: {
   subscriptions: Subscription[];
   settings: Settings;
   forecastData: Array<{ date: string; balance: number }>;
+  financeSnapshot: {
+    monthlyRealBalance: number;
+    weeklySafeToUse: number;
+    dailyAllowance: number;
+    todaySpent: number;
+    todayRemaining: number;
+    weeklySpent: number;
+    weeklyIncome: number;
+    weeklyUpcomingSubs: number;
+  };
   signal?: AbortSignal;
 }) {
+  const recentTransactions = [...params.transactions]
+    .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+    .slice(0, 80);
+  const upcomingSubscriptions = [...params.subscriptions]
+    .sort((a, b) => +new Date(a.nextBillingDate) - +new Date(b.nextBillingDate))
+    .slice(0, 40);
+
   const context = {
+    financeSnapshot: params.financeSnapshot,
     settings: params.settings,
-    transactions: params.transactions,
-    subscriptions: params.subscriptions,
-    forecastData: params.forecastData,
+    recentTransactions,
+    upcomingSubscriptions,
+    forecastData: params.forecastData.slice(0, 30),
   };
 
   const response = await fetch("/api/groq", {
@@ -30,7 +48,14 @@ export async function askGroqFinanceAssistant(params: {
   });
 
   if (!response.ok) {
-    throw new Error(`Groq request failed: ${response.status}`);
+    let detail = "";
+    try {
+      const err = await response.json() as { error?: string; detail?: string };
+      detail = err.detail || err.error || "";
+    } catch {
+      // ignore parse error
+    }
+    throw new Error(`Groq request failed: ${response.status}${detail ? ` - ${detail}` : ""}`);
   }
 
   const data = await response.json() as {
