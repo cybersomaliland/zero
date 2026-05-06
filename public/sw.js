@@ -58,6 +58,24 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
+  const title = payload.title || "Zero reminder";
+  const options = {
+    body: payload.body || "Open Zero to review your money and routine.",
+    icon: payload.icon || "/icon.svg",
+    badge: payload.badge || "/icon.svg",
+    tag: payload.tag || "zero-push",
+    data: { url: payload.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(

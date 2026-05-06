@@ -22,6 +22,24 @@ const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
 ];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
+type RoutineDaySnapshot = {
+  timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
+  tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
+  meals: Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>;
+  ritualEnergy: number;
+  dayRating: 1 | 2 | 3 | 4 | 5 | null;
+};
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 function App() {
   const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData, recategorizeTransactions } = useZeroStore();
@@ -72,6 +90,8 @@ function App() {
   const [reflectionTwo, setReflectionTwo] = useState("");
   const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [dayClosed, setDayClosed] = useState(false);
+  const [routineHydrated, setRoutineHydrated] = useState(false);
+  const [routineHistory, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
   const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
@@ -90,6 +110,11 @@ function App() {
   const [notifState, setNotifState] = useState<"unsupported" | "default" | "granted" | "denied">(
     "default",
   );
+  const [pushConnected, setPushConnected] = useState(false);
+  const [testNotifDelaySec, setTestNotifDelaySec] = useState("10");
+  const [scheduledNotifAt, setScheduledNotifAt] = useState<number | null>(null);
+  const [timerNow, setTimerNow] = useState<number>(Date.now());
+  const scheduledNotifTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     void init();
@@ -103,6 +128,117 @@ function App() {
     }, 4500);
     return () => window.clearInterval(id);
   }, [newsItems]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("zero_routine_v1");
+      if (!raw) {
+        setRoutineHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<{
+        ritualReview: string;
+        ritualPriorityOne: string;
+        ritualPriorityTwo: string;
+        ritualPriorityThree: string;
+        ritualIntention: string;
+        ritualAvoid: string;
+        ritualEnergy: number;
+        timelineSortAsc: boolean;
+        timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
+        meals: Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>;
+        tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
+        reflectionOne: string;
+        reflectionTwo: string;
+        dayRating: 1 | 2 | 3 | 4 | 5 | null;
+        dayClosed: boolean;
+      }>;
+      if (typeof parsed.ritualReview === "string") setRitualReview(parsed.ritualReview);
+      if (typeof parsed.ritualPriorityOne === "string") setRitualPriorityOne(parsed.ritualPriorityOne);
+      if (typeof parsed.ritualPriorityTwo === "string") setRitualPriorityTwo(parsed.ritualPriorityTwo);
+      if (typeof parsed.ritualPriorityThree === "string") setRitualPriorityThree(parsed.ritualPriorityThree);
+      if (typeof parsed.ritualIntention === "string") setRitualIntention(parsed.ritualIntention);
+      if (typeof parsed.ritualAvoid === "string") setRitualAvoid(parsed.ritualAvoid);
+      if (typeof parsed.ritualEnergy === "number") setRitualEnergy(parsed.ritualEnergy);
+      if (typeof parsed.timelineSortAsc === "boolean") setTimelineSortAsc(parsed.timelineSortAsc);
+      if (Array.isArray(parsed.timelineEvents)) setTimelineEvents(parsed.timelineEvents);
+      if (Array.isArray(parsed.meals)) setMeals(parsed.meals);
+      if (Array.isArray(parsed.tasks)) setTasks(parsed.tasks);
+      if (typeof parsed.reflectionOne === "string") setReflectionOne(parsed.reflectionOne);
+      if (typeof parsed.reflectionTwo === "string") setReflectionTwo(parsed.reflectionTwo);
+      if (parsed.dayRating === null || [1, 2, 3, 4, 5].includes(parsed.dayRating as number)) setDayRating(parsed.dayRating ?? null);
+      if (typeof parsed.dayClosed === "boolean") setDayClosed(parsed.dayClosed);
+      try {
+        const rawHistory = localStorage.getItem("zero_routine_history_v1");
+        if (rawHistory) {
+          const parsedHistory = JSON.parse(rawHistory) as Record<string, RoutineDaySnapshot>;
+          if (parsedHistory && typeof parsedHistory === "object") {
+            setRoutineHistory(parsedHistory);
+          }
+        }
+      } catch {
+        // ignore corrupt history cache
+      }
+    } catch {
+      // ignore corrupt routine cache
+    } finally {
+      setRoutineHydrated(true);
+    }
+  }, []);
+  useEffect(() => {
+    if (!routineHydrated) return;
+    const payload = {
+      ritualReview,
+      ritualPriorityOne,
+      ritualPriorityTwo,
+      ritualPriorityThree,
+      ritualIntention,
+      ritualAvoid,
+      ritualEnergy,
+      timelineSortAsc,
+      timelineEvents,
+      meals,
+      tasks,
+      reflectionOne,
+      reflectionTwo,
+      dayRating,
+      dayClosed,
+    };
+    localStorage.setItem("zero_routine_v1", JSON.stringify(payload));
+    const dayKey = format(new Date(), "yyyy-MM-dd");
+    const snapshot: RoutineDaySnapshot = {
+      timelineEvents,
+      tasks,
+      meals,
+      ritualEnergy,
+      dayRating,
+    };
+    setRoutineHistory((prev) => {
+      const nextHistory = {
+        ...prev,
+        [dayKey]: snapshot,
+      };
+      localStorage.setItem("zero_routine_history_v1", JSON.stringify(nextHistory));
+      return nextHistory;
+    });
+  }, [
+    routineHydrated,
+    ritualReview,
+    ritualPriorityOne,
+    ritualPriorityTwo,
+    ritualPriorityThree,
+    ritualIntention,
+    ritualAvoid,
+    ritualEnergy,
+    timelineSortAsc,
+    timelineEvents,
+    meals,
+    tasks,
+    dayRating,
+    ritualEnergy,
+    reflectionOne,
+    reflectionTwo,
+    dayClosed,
+  ]);
   useEffect(() => {
     if (!settings) return;
     const key = `zero_morning_briefing_seen_${format(new Date(), "yyyy-MM-dd")}`;
@@ -296,6 +432,24 @@ function App() {
     copy.sort((a, b) => timelineSortAsc ? a.hour - b.hour : b.hour - a.hour);
     return copy;
   }, [timelineEvents, timelineSortAsc]);
+  const yesterdayKey = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return format(d, "yyyy-MM-dd");
+  }, []);
+  const yesterdayRoutine = routineHistory[yesterdayKey];
+  const repeatedTimelineTitles = useMemo(() => {
+    if (!yesterdayRoutine) return [];
+    const today = new Set(timelineEvents.map((e) => e.title.trim().toLowerCase()));
+    return yesterdayRoutine.timelineEvents
+      .filter((e) => today.has(e.title.trim().toLowerCase()))
+      .map((e) => e.title);
+  }, [timelineEvents, yesterdayRoutine]);
+  const recommendedFromYesterday = useMemo(() => {
+    if (!yesterdayRoutine) return [];
+    const today = new Set(timelineEvents.map((e) => e.title.trim().toLowerCase()));
+    return yesterdayRoutine.timelineEvents.filter((e) => !today.has(e.title.trim().toLowerCase())).slice(0, 3);
+  }, [timelineEvents, yesterdayRoutine]);
   const timelineHours = useMemo(() => Array.from({ length: 17 }, (_, idx) => idx + 6), []);
   const mealStats = useMemo(() => {
     const planned = meals.filter((m) => m.planned).length;
@@ -425,10 +579,53 @@ function App() {
     if (periodic?.register) {
       await periodic.register("zero-daily-check", { minInterval: 24 * 60 * 60 * 1000 });
     }
+
+    try {
+      if (!("pushManager" in registration)) return;
+      const keyResponse = await fetch("/api/push/public-key");
+      if (!keyResponse.ok) return;
+      const keyData = await keyResponse.json();
+      if (!keyData?.publicKey) return;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(String(keyData.publicKey)),
+        });
+      }
+      const syncRes = await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription,
+          displayName: settings?.profileName?.trim() || "there",
+          upcomingCount: upcoming.length,
+        }),
+      });
+      setPushConnected(syncRes.ok);
+    } catch {
+      setPushConnected(false);
+    }
   };
 
   const testNotification = async () => {
     if (!("serviceWorker" in navigator)) return;
+    try {
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: settings?.profileName?.trim() || "there",
+          upcomingCount: upcoming.length,
+        }),
+      });
+      if (response.ok) {
+        setPushConnected(true);
+        return;
+      }
+    } catch {
+      // fallback to local notification below
+    }
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification("Zero reminder", {
       body: `You have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
@@ -436,6 +633,22 @@ function App() {
       badge: "/icon.svg",
       tag: "zero-test",
     });
+  };
+  const scheduleTestNotification = () => {
+    if (notifState !== "granted") return;
+    const parsed = Number(testNotifDelaySec);
+    const delaySec = Math.max(1, Math.min(3600, Number.isFinite(parsed) ? Math.floor(parsed) : 10));
+    setTestNotifDelaySec(String(delaySec));
+    if (scheduledNotifTimeoutRef.current) {
+      window.clearTimeout(scheduledNotifTimeoutRef.current);
+    }
+    const fireAt = Date.now() + delaySec * 1000;
+    setScheduledNotifAt(fireAt);
+    scheduledNotifTimeoutRef.current = window.setTimeout(() => {
+      void testNotification();
+      setScheduledNotifAt(null);
+      scheduledNotifTimeoutRef.current = null;
+    }, delaySec * 1000);
   };
 
   const askAssistant = async (question: string) => {
@@ -485,6 +698,31 @@ function App() {
       return;
     }
     setNotifState(Notification.permission as "default" | "granted" | "denied");
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then((registration) => {
+      registration.pushManager.getSubscription().then((subscription) => {
+        setPushConnected(Boolean(subscription));
+      }).catch(() => {
+        setPushConnected(false);
+      });
+    });
+  }, []);
+  useEffect(() => {
+    if (!scheduledNotifAt) return;
+    const id = window.setInterval(() => {
+      setTimerNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [scheduledNotifAt]);
+  useEffect(() => {
+    return () => {
+      if (scheduledNotifTimeoutRef.current) {
+        window.clearTimeout(scheduledNotifTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -882,26 +1120,57 @@ function App() {
                   Sort: {timelineSortAsc ? "earliest" : "latest"}
                 </button>
               </div>
-              <p className="muted">6am to 10pm flow with live current-hour indicator.</p>
-              <div className="timeline-add-form">
-                <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add event" />
-                <input type="number" min={6} max={22} value={timelineHour} onChange={(e) => setTimelineHour(e.target.value)} />
-                <select value={timelineCategory} onChange={(e) => setTimelineCategory(e.target.value as TimelineCategory)}>
-                  <option value="work">Work</option>
-                  <option value="health">Health</option>
-                  <option value="personal">Personal</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const hour = Number(timelineHour);
-                    if (!timelineTitle.trim() || hour < 6 || hour > 22) return;
-                    setTimelineEvents((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), hour, category: timelineCategory }]);
-                    setTimelineTitle("");
-                  }}
-                >
-                  Add
-                </button>
+              <p className="muted">Plan your day in blocks. Tap one suggestion or add a custom block.</p>
+              <div className="timeline-memory">
+                {!yesterdayRoutine && <p className="muted">No yesterday history yet. Start adding blocks and I will learn your pattern.</p>}
+                {yesterdayRoutine && (
+                  <>
+                    <p className="muted">
+                      Yesterday: {yesterdayRoutine.timelineEvents.length} blocks, {yesterdayRoutine.tasks.filter((t) => t.done).length}/{yesterdayRoutine.tasks.length} tasks done, meal completion {Math.round((yesterdayRoutine.meals.filter((m) => m.done).length / Math.max(1, yesterdayRoutine.meals.filter((m) => m.planned).length)) * 100)}%.
+                    </p>
+                    {repeatedTimelineTitles.length > 0 && (
+                      <p className="muted timeline-recommend">You repeated: {repeatedTimelineTitles.slice(0, 3).join(", ")}. Keep this rhythm.</p>
+                    )}
+                    {recommendedFromYesterday.length > 0 && (
+                      <div className="timeline-repeat-list">
+                        {recommendedFromYesterday.map((event) => (
+                          <button
+                            key={`${event.id}-${event.title}`}
+                            type="button"
+                            className="ghost-btn"
+                            onClick={() => setTimelineEvents((prev) => [...prev, { ...event, id: Date.now() + Math.floor(Math.random() * 1000) }])}
+                          >
+                            Add "{event.title}"
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="timeline-add-card">
+                <div className="timeline-add-form">
+                  <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add event" />
+                  <div className="timeline-inline-fields">
+                    <input type="number" min={6} max={22} value={timelineHour} onChange={(e) => setTimelineHour(e.target.value)} />
+                    <select value={timelineCategory} onChange={(e) => setTimelineCategory(e.target.value as TimelineCategory)}>
+                      <option value="work">Work</option>
+                      <option value="health">Health</option>
+                      <option value="personal">Personal</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const hour = Number(timelineHour);
+                      if (!timelineTitle.trim() || hour < 6 || hour > 22) return;
+                      setTimelineEvents((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), hour, category: timelineCategory }]);
+                      setTimelineTitle("");
+                    }}
+                  >
+                    Add block
+                  </button>
+                </div>
               </div>
               <div className="timeline-list">
                 {timelineHours.map((hour) => {
@@ -910,7 +1179,7 @@ function App() {
                     <div key={hour} className={`timeline-hour ${hour === currentHour ? "current" : ""}`}>
                       <div className="timeline-hour-label">
                         {hour === 12 ? "12pm" : hour > 12 ? `${hour - 12}pm` : `${hour}am`}
-                        {hour === currentHour && <span className="timeline-now">You are here</span>}
+                        {hour === currentHour && <span className="timeline-now">Now</span>}
                       </div>
                       <div className="timeline-hour-events">
                         {atHour.length === 0 && <p className="muted">-</p>}
@@ -1098,7 +1367,31 @@ function App() {
                   Test notification
                 </button>
               </div>
+              <div className="settings-actions">
+                <input
+                  type="number"
+                  min={1}
+                  max={3600}
+                  value={testNotifDelaySec}
+                  onChange={(e) => setTestNotifDelaySec(e.target.value)}
+                  placeholder="Delay seconds"
+                />
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={scheduleTestNotification}
+                  disabled={notifState !== "granted"}
+                >
+                  Schedule test timer
+                </button>
+              </div>
+              {scheduledNotifAt && (
+                <p className="muted">
+                  Scheduled in {Math.max(0, Math.ceil((scheduledNotifAt - timerNow) / 1000))}s
+                </p>
+              )}
               <p className="muted">Status: <strong>{notifState}</strong></p>
+              <p className="muted">Web push: <strong>{pushConnected ? "connected" : "not connected"}</strong></p>
             </section>
 
             <section className="card settings-card">

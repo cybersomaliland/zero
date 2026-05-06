@@ -1,6 +1,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import webpush from "web-push";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +21,17 @@ const X_QUERY_VARIANTS = [
   "#Somaliland OR Somaliland news",
   "Somaliland politics OR Somaliland economy OR Somaliland government",
 ];
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:zero@example.com";
+const WEB_PUSH_ENABLED = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const pushSubscriptions = new Map();
 
 app.use(express.json({ limit: "1mb" }));
+
+if (WEB_PUSH_ENABLED) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
 
 function decodeXmlEntities(input) {
   return String(input)
@@ -149,6 +159,94 @@ app.get("/api/news-brief", async (req, res) => {
   }
 
   return res.status(200).json({ items: [] });
+});
+
+function serializePushError(error) {
+  if (!error || typeof error !== "object") return "Unknown web-push error";
+  const statusCode = "statusCode" in error ? error.statusCode : undefined;
+  const body = "body" in error ? error.body : undefined;
+  const message = "message" in error ? error.message : "Web-push error";
+  return `${statusCode ?? "n/a"} ${message}${body ? ` - ${String(body).slice(0, 200)}` : ""}`;
+}
+
+async function sendPushToSubscription(subscription, payload) {
+  try {
+    await webpush.sendNotification(subscription, JSON.stringify(payload));
+    return { ok: true };
+  } catch (error) {
+    const statusCode = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 0;
+    if (statusCode === 404 || statusCode === 410) {
+      pushSubscriptions.delete(subscription.endpoint);
+      return { ok: false, removed: true, detail: "Expired subscription removed" };
+    }
+    return { ok: false, detail: serializePushError(error) };
+  }
+}
+
+app.get("/api/push/public-key", (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  return res.status(200).json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/push/subscribe", async (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const subscription = req.body?.subscription;
+  if (!subscription || typeof subscription.endpoint !== "string") {
+    return res.status(400).json({ error: "Missing valid subscription object" });
+  }
+  pushSubscriptions.set(subscription.endpoint, subscription);
+
+  const displayName = String(req.body?.displayName || "there").trim() || "there";
+  const upcomingCount = Number(req.body?.upcomingCount || 0);
+  const firstPayload = {
+    title: "Coach Zero connected",
+    body: upcomingCount > 0
+      ? `Hi ${displayName}, notifications are live. ${upcomingCount} bill(s) are coming up.`
+      : `Hi ${displayName}, notifications are live. I will keep your day and money on track.`,
+    url: "/",
+    tag: "zero-connected",
+  };
+  const sent = await sendPushToSubscription(subscription, firstPayload);
+  return res.status(200).json({ ok: true, sent });
+});
+
+app.post("/api/push/unsubscribe", (req, res) => {
+  const endpoint = String(req.body?.endpoint || "");
+  if (!endpoint) {
+    return res.status(400).json({ error: "Missing endpoint" });
+  }
+  pushSubscriptions.delete(endpoint);
+  return res.status(200).json({ ok: true });
+});
+
+app.post("/api/push/test", async (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const displayName = String(req.body?.displayName || "there").trim() || "there";
+  const upcomingCount = Number(req.body?.upcomingCount || 0);
+  const payload = {
+    title: "Zero reminder",
+    body: upcomingCount > 0
+      ? `Hi ${displayName}, you have ${upcomingCount} upcoming bill(s). Open Zero now.`
+      : `Hi ${displayName}, quick check-in: review your spending and routine blocks.`,
+    url: "/",
+    tag: "zero-test",
+  };
+  const targets = [...pushSubscriptions.values()];
+  if (targets.length === 0) {
+    return res.status(404).json({ error: "No active push subscriptions yet" });
+  }
+  const results = await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
+  return res.status(200).json({
+    ok: true,
+    sent: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+  });
 });
 
 app.post("/api/groq", async (req, res) => {
