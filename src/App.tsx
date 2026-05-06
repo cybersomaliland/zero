@@ -54,8 +54,12 @@ function App() {
   const [timelineTitle, setTimelineTitle] = useState("");
   const [timelineHour, setTimelineHour] = useState("9");
   const [timelineCategory, setTimelineCategory] = useState<TimelineCategory>("work");
-  const [habits, setHabits] = useState<Array<{ id: number; name: string; done: boolean }>>([]);
-  const [habitName, setHabitName] = useState("");
+  const [mealName, setMealName] = useState("");
+  const [meals, setMeals] = useState<Array<{ id: number; name: string; planned: boolean; done: boolean; calories: string }>>([
+    { id: 1, name: "Breakfast", planned: false, done: false, calories: "" },
+    { id: 2, name: "Lunch", planned: false, done: false, calories: "" },
+    { id: 3, name: "Dinner", planned: false, done: false, calories: "" },
+  ]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
@@ -280,8 +284,13 @@ function App() {
     return copy;
   }, [timelineEvents, timelineSortAsc]);
   const timelineHours = useMemo(() => Array.from({ length: 17 }, (_, idx) => idx + 6), []);
-  const habitsDone = useMemo(() => habits.filter((h) => h.done).length, [habits]);
-  const habitRate = habits.length ? (habitsDone / habits.length) * 100 : 0;
+  const mealStats = useMemo(() => {
+    const planned = meals.filter((m) => m.planned).length;
+    const completed = meals.filter((m) => m.done).length;
+    const totalCalories = meals.reduce((acc, m) => acc + (Number(m.calories) || 0), 0);
+    const completion = planned > 0 ? Math.round((completed / planned) * 100) : 0;
+    return { planned, completed, totalCalories, completion };
+  }, [meals]);
   const filteredTasks = useMemo(
     () => tasks.filter((t) => {
       if (taskFilter === "open" && t.done) return false;
@@ -294,9 +303,39 @@ function App() {
   const doneTasks = useMemo(() => tasks.filter((t) => t.done).length, [tasks]);
   const overallScore = useMemo(() => {
     const taskPct = tasks.length ? doneTasks / tasks.length : 0;
-    const habitPct = habits.length ? habitsDone / habits.length : 0;
-    return Math.round(((taskPct + habitPct) / 2) * 100);
-  }, [tasks, habits, doneTasks, habitsDone]);
+    const mealPct = mealStats.completion / 100;
+    return Math.round(((taskPct + mealPct) / 2) * 100);
+  }, [tasks, doneTasks, mealStats.completion]);
+  const dailyBriefing = useMemo(() => {
+    const openTasks = Math.max(0, tasks.length - doneTasks);
+    const moneySignal = todayRemaining >= 0 ? "on track" : "over target";
+    const mealSignal = mealStats.planned > 0 ? `${mealStats.completed}/${mealStats.planned} meals done` : "no meals planned yet";
+    const taskSignal = tasks.length > 0 ? `${doneTasks}/${tasks.length} tasks done` : "no tasks planned yet";
+    return {
+      openTasks,
+      moneySignal,
+      mealSignal,
+      taskSignal,
+      nextBills: getUpcomingBills(subscriptions, 3).length,
+    };
+  }, [tasks, doneTasks, todayRemaining, mealStats, subscriptions]);
+  const sortedNews = useMemo(
+    () => [...newsItems].sort((a, b) => {
+      const ta = a.publishedAt ? +new Date(a.publishedAt) : 0;
+      const tb = b.publishedAt ? +new Date(b.publishedAt) : 0;
+      return tb - ta;
+    }),
+    [newsItems],
+  );
+  const latestNews = sortedNews[0];
+  const latestNewsIsFresh = useMemo(() => {
+    if (!latestNews?.publishedAt) return false;
+    const t = +new Date(latestNews.publishedAt);
+    if (!Number.isFinite(t) || t <= 0) return false;
+    const ageMs = Date.now() - t;
+    return ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
+  }, [latestNews]);
+  const fallbackHeadline = newsItems[activeHeadlineIndex];
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -514,7 +553,7 @@ function App() {
                 </button>
               </div>
               {!newsLoading && newsItems.length === 0 && !newsError && (
-                <p className="muted">Tap “Refresh news” to load hot headlines.</p>
+                <p className="muted">Tap “Refresh news” to load the latest Somaliland headlines.</p>
               )}
               {newsLoading && <p className="muted">Loading latest headlines...</p>}
               {!newsLoading && newsError && <p className="muted">{newsError}</p>}
@@ -522,24 +561,56 @@ function App() {
                 <button
                   type="button"
                   className="news-hot-item"
-                  onClick={() => window.open(newsItems[activeHeadlineIndex].url, "_blank", "noopener,noreferrer")}
+                  onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
                 >
-                  <span className="news-hot-label">Hot headline</span>
+                  <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.strong
-                      key={newsItems[activeHeadlineIndex].url}
+                      key={(latestNewsIsFresh ? latestNews : fallbackHeadline).url}
                       className="news-hot-title"
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ duration: 0.25 }}
                     >
-                      {newsItems[activeHeadlineIndex].title}
+                      {(latestNewsIsFresh ? latestNews : fallbackHeadline).title}
                     </motion.strong>
                   </AnimatePresence>
-                  <span className="muted">{newsItems[activeHeadlineIndex].source}</span>
+                  <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
                 </button>
               )}
+            </section>
+            <section className="home-intro briefing-card">
+              <div className="row">
+                <div>
+                  <p className="home-kicker">Daily briefing</p>
+                  <h2 className="home-title">Today at a glance</h2>
+                </div>
+                <span className="briefing-score">{overallScore}%</span>
+              </div>
+              <div className="briefing-grid">
+                <article>
+                  <p className="muted">Money</p>
+                  <strong className={todayRemaining < 0 ? "negative" : "positive"}>{dailyBriefing.moneySignal}</strong>
+                </article>
+                <article>
+                  <p className="muted">Meals</p>
+                  <strong>{dailyBriefing.mealSignal}</strong>
+                </article>
+                <article>
+                  <p className="muted">Tasks</p>
+                  <strong>{dailyBriefing.taskSignal}</strong>
+                </article>
+                <article>
+                  <p className="muted">Next 3d bills</p>
+                  <strong>{dailyBriefing.nextBills}</strong>
+                </article>
+              </div>
+              <p className="muted">
+                {dailyBriefing.openTasks > 0
+                  ? `${dailyBriefing.openTasks} open task(s) left. Prioritize top 1 before evening.`
+                  : "You are clear on tasks. Protect your spending pace and close strong."}
+              </p>
             </section>
 
             <div className="home-section-head">
@@ -720,7 +791,7 @@ function App() {
 
         {tab === "Insights" && (
           <div className="routine-layout">
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-equal">
               <div className="row">
                 <h3>Morning ritual</h3>
                 <span className="badge">{ritualDoneCount}/5 done</span>
@@ -758,15 +829,15 @@ function App() {
               </div>
             </section>
 
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-equal">
               <div className="row">
                 <h3>Visual day timeline</h3>
                 <button type="button" className="ghost-btn" onClick={() => setTimelineSortAsc((v) => !v)}>
-                  Sort {timelineSortAsc ? "latest" : "earliest"}
+                  Sort: {timelineSortAsc ? "earliest" : "latest"}
                 </button>
               </div>
-              <p className="muted">6am to 10pm schedule with live hour marker.</p>
-              <div className="routine-inline-form">
+              <p className="muted">6am to 10pm flow with live current-hour indicator.</p>
+              <div className="timeline-add-form">
                 <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add event" />
                 <input type="number" min={6} max={22} value={timelineHour} onChange={(e) => setTimelineHour(e.target.value)} />
                 <select value={timelineCategory} onChange={(e) => setTimelineCategory(e.target.value as TimelineCategory)}>
@@ -792,7 +863,7 @@ function App() {
                   return (
                     <div key={hour} className={`timeline-hour ${hour === currentHour ? "current" : ""}`}>
                       <div className="timeline-hour-label">
-                        {hour > 12 ? `${hour - 12}pm` : `${hour}am`}
+                        {hour === 12 ? "12pm" : hour > 12 ? `${hour - 12}pm` : `${hour}am`}
                         {hour === currentHour && <span className="timeline-now">You are here</span>}
                       </div>
                       <div className="timeline-hour-events">
@@ -813,28 +884,54 @@ function App() {
 
             <section className="card routine-card">
               <div className="row">
-                <h3>Habit tracker</h3>
-                <span className="badge">{Math.round(habitRate)}%</span>
+                <h3>Meal planner</h3>
+                <span className="badge">{mealStats.completion}%</span>
               </div>
-              <p className="muted">Done: {habitsDone} Remaining: {Math.max(0, habits.length - habitsDone)} Rate: {Math.round(habitRate)}%</p>
-              <div className="routine-inline-form">
-                <input value={habitName} onChange={(e) => setHabitName(e.target.value)} placeholder="Add habit" />
-                <button type="button" onClick={() => {
-                  if (!habitName.trim()) return;
-                  setHabits((prev) => [...prev, { id: Date.now(), name: habitName.trim(), done: false }]);
-                  setHabitName("");
-                }}>Add</button>
+              <p className="muted">Plan meals, mark completed, and track calories for the day.</p>
+              <div className="meal-add-row">
+                <input value={mealName} onChange={(e) => setMealName(e.target.value)} placeholder="Add meal (e.g. Snack)" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!mealName.trim()) return;
+                    setMeals((prev) => [...prev, { id: Date.now(), name: mealName.trim(), planned: true, done: false, calories: "" }]);
+                    setMealName("");
+                  }}
+                >
+                  Add
+                </button>
               </div>
-              {habits.length === 0 && <p className="muted routine-empty">No habits yet. Add one small daily habit to start your streak.</p>}
-              {habits.map((habit) => (
-                <div key={habit.id} className="routine-row">
-                  <label className="routine-check-item">
-                    <input type="checkbox" checked={habit.done} onChange={() => setHabits((prev) => prev.map((h) => h.id === habit.id ? { ...h, done: !h.done } : h))} />
-                    <span>{habit.name}</span>
-                  </label>
-                  <button type="button" className="ghost-btn" onClick={() => setHabits((prev) => prev.filter((h) => h.id !== habit.id))}>Delete</button>
-                </div>
-              ))}
+              <div className="meal-grid">
+                {meals.map((meal) => (
+                  <article key={meal.id} className="meal-item">
+                    <div className="meal-head">
+                      <strong>{meal.name}</strong>
+                      <button type="button" className="ghost-btn" onClick={() => setMeals((prev) => prev.filter((m) => m.id !== meal.id))}>Delete</button>
+                    </div>
+                    <div className="meal-toggle-row">
+                      <label className="routine-check-item">
+                        <input type="checkbox" checked={meal.planned} onChange={() => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, planned: !m.planned } : m))} />
+                        <span>Planned</span>
+                      </label>
+                      <label className="routine-check-item">
+                        <input type="checkbox" checked={meal.done} onChange={() => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, done: !m.done } : m))} />
+                        <span>Done</span>
+                      </label>
+                    </div>
+                    <div className="meal-calorie-row">
+                      <input
+                        type="number"
+                        min={0}
+                        value={meal.calories}
+                        onChange={(e) => setMeals((prev) => prev.map((m) => m.id === meal.id ? { ...m, calories: e.target.value } : m))}
+                        placeholder="Calories"
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <p className="muted">Planned: {mealStats.planned} · Done: {mealStats.completed} · Calories: {mealStats.totalCalories}</p>
+              <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${mealStats.completion}%` }} /></div>
             </section>
 
             <section className="card routine-card">
@@ -887,7 +984,7 @@ function App() {
                 <h3>End-of-day shutdown</h3>
                 <span className="badge">Score {overallScore}%</span>
               </div>
-              <p className="muted">Tasks done: {doneTasks}/{tasks.length} · Habits done: {habitsDone}/{habits.length}</p>
+              <p className="muted">Tasks done: {doneTasks}/{tasks.length} · Meal plan: {mealStats.completion}%</p>
               <div className="routine-progress-track"><div className="routine-progress-fill" style={{ width: `${overallScore}%` }} /></div>
               <h4>Incomplete tasks</h4>
               {tasks.filter((t) => !t.done).length === 0 && <p className="muted">All tasks completed today.</p>}
@@ -909,14 +1006,16 @@ function App() {
               <label>Reflection prompt 2: What will I improve tomorrow?
                 <textarea value={reflectionTwo} onChange={(e) => setReflectionTwo(e.target.value)} rows={2} />
               </label>
-              <div className="task-filter-row">
+              <div className="day-rating-row">
                 {[1, 2, 3, 4, 5].map((rate) => (
                   <button key={rate} type="button" className={dayRating === rate ? "active" : ""} onClick={() => setDayRating(rate as 1 | 2 | 3 | 4 | 5)}>
-                    {rate}★
+                    {rate}
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={() => setDayClosed(true)}>Close the day</button>
+              <button type="button" className="close-day-btn" onClick={() => setDayClosed(true)}>
+                Close the day
+              </button>
               {dayClosed && (
                 <div className="routine-celebration">
                   <h4>Day closed. Great work.</h4>
@@ -928,44 +1027,69 @@ function App() {
         )}
 
         {tab === "Settings" && (
-          <section className="card">
-            <h3>Settings</h3>
-            <label>Monthly salary <input type="number" value={settings.monthlySalary ?? 0} onChange={(e) => updateSettings({ monthlySalary: Number(e.target.value) })} /></label>
-            <label>Current balance <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
-            <label>Monthly savings reserve <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
-            <p className="muted">Weekly safe formula: Weekly allocation {money(weeklySalaryAllocation)} + this week Tx {money(weeklyTransactionsNet)} - week subs {money(weeklyUpcomingSubs)} - weekly savings {money(weeklySavingsReserve)}</p>
-            <p className="muted">Monthly balance formula: Current balance {money(realBalance)} + month Tx {money(monthlyTransactionsNet)} - month subs {money(monthlyUpcomingSubs)} - savings {money(monthlySavingsReserve)}</p>
-            <div className="inline-actions">
-              <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
-              <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
-                Test notification
+          <div className="settings-layout">
+            <section className="card settings-card">
+              <p className="settings-kicker">Financial profile</p>
+              <h3>Money setup</h3>
+              <div className="settings-input-grid">
+                <label>Monthly salary<input type="number" value={settings.monthlySalary ?? 0} onChange={(e) => updateSettings({ monthlySalary: Number(e.target.value) })} /></label>
+                <label>Current balance<input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
+                <label>Monthly savings reserve<input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+              </div>
+              <div className="settings-formula">
+                <p className="muted">Weekly safe: {money(weeklySalaryAllocation)} + {money(weeklyTransactionsNet)} - {money(weeklyUpcomingSubs)} - {money(weeklySavingsReserve)}</p>
+                <p className="muted">Monthly balance: {money(realBalance)} + {money(monthlyTransactionsNet)} - {money(monthlyUpcomingSubs)} - {money(monthlySavingsReserve)}</p>
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <p className="settings-kicker">Notifications</p>
+              <h3>Alerts and reminders</h3>
+              <div className="settings-actions">
+                <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
+                <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
+                  Test notification
+                </button>
+              </div>
+              <p className="muted">Status: <strong>{notifState}</strong></p>
+            </section>
+
+            <section className="card settings-card">
+              <p className="settings-kicker">Maintenance</p>
+              <h3>App tools</h3>
+              <div className="settings-actions settings-actions-stack">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={async () => {
+                    const ok = window.confirm("Re-categorize all transactions with improved smart rules?");
+                    if (!ok) return;
+                    await recategorizeTransactions();
+                  }}
+                >
+                  Re-categorize transactions
+                </button>
+                <button type="button" className="ghost-btn" onClick={() => { void refreshApp(); }}>Refresh app</button>
+              </div>
+            </section>
+
+            <section className="card settings-card settings-danger">
+              <p className="settings-kicker">Danger zone</p>
+              <h3>Reset local data</h3>
+              <p className="muted">This removes transactions, subscriptions, settings, and rules from this device.</p>
+              <button
+                className="danger-btn"
+                type="button"
+                onClick={async () => {
+                  const ok = window.confirm("Clear all local app data? This cannot be undone.");
+                  if (!ok) return;
+                  await clearData();
+                }}
+              >
+                Clear all data
               </button>
-            </div>
-            <p className="muted">Notification status: {notifState}</p>
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={async () => {
-                const ok = window.confirm("Re-categorize all transactions with improved smart rules?");
-                if (!ok) return;
-                await recategorizeTransactions();
-              }}
-            >
-              Re-categorize transactions
-            </button>
-            <button type="button" onClick={() => { void refreshApp(); }}>Refresh app</button>
-            <button
-              className="danger-btn"
-              type="button"
-              onClick={async () => {
-                const ok = window.confirm("Clear all local app data? This cannot be undone.");
-                if (!ok) return;
-                await clearData();
-              }}
-            >
-              Clear data
-            </button>
-          </section>
+            </section>
+          </div>
         )}
       </main>
 
