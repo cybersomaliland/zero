@@ -26,6 +26,7 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:zero@example.com";
 const WEB_PUSH_ENABLED = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 const pushSubscriptions = new Map();
+const scheduledPushJobs = new Set();
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -281,6 +282,35 @@ app.post("/api/send-notification", async (req, res) => {
     sent: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
   });
+});
+
+app.post("/api/schedule-notification", (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const title = String(req.body?.title || "").trim();
+  const body = String(req.body?.body || "").trim();
+  const delaySeconds = Number(req.body?.delaySeconds || 0);
+  if (!title || !body) {
+    return res.status(400).json({ error: "title and body are required" });
+  }
+  if (!Number.isFinite(delaySeconds) || delaySeconds < 1) {
+    return res.status(400).json({ error: "delaySeconds must be >= 1" });
+  }
+  const targets = [...pushSubscriptions.values()];
+  if (targets.length === 0) {
+    return res.status(404).json({ error: "No active push subscriptions yet" });
+  }
+  const payload = { title, body, icon: "/icon.svg", url: "/" };
+  const timeoutId = setTimeout(async () => {
+    try {
+      await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
+    } finally {
+      scheduledPushJobs.delete(timeoutId);
+    }
+  }, Math.floor(delaySeconds * 1000));
+  scheduledPushJobs.add(timeoutId);
+  return res.status(200).json({ ok: true, scheduledInSeconds: Math.floor(delaySeconds) });
 });
 
 app.post("/api/groq", async (req, res) => {

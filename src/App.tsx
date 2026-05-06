@@ -681,11 +681,37 @@ function App() {
     }
     const fireAt = Date.now() + delaySec * 1000;
     setScheduledNotifAt(fireAt);
-    scheduledNotifTimeoutRef.current = window.setTimeout(() => {
-      void testNotification();
-      setScheduledNotifAt(null);
-      scheduledNotifTimeoutRef.current = null;
-    }, delaySec * 1000);
+    void fetch("/api/schedule-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Zero reminder",
+        body: `You have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
+        delaySeconds: delaySec,
+      }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        setPushStatusDetail("Server schedule failed. Keeping local timer fallback.");
+        scheduledNotifTimeoutRef.current = window.setTimeout(() => {
+          void testNotification();
+          setScheduledNotifAt(null);
+          scheduledNotifTimeoutRef.current = null;
+        }, delaySec * 1000);
+        return;
+      }
+      setPushStatusDetail(`Notification scheduled on server in ${delaySec}s.`);
+      scheduledNotifTimeoutRef.current = window.setTimeout(() => {
+        setScheduledNotifAt(null);
+        scheduledNotifTimeoutRef.current = null;
+      }, delaySec * 1000);
+    }).catch(() => {
+      setPushStatusDetail("Server schedule unreachable. Keeping local timer fallback.");
+      scheduledNotifTimeoutRef.current = window.setTimeout(() => {
+        void testNotification();
+        setScheduledNotifAt(null);
+        scheduledNotifTimeoutRef.current = null;
+      }, delaySec * 1000);
+    });
   };
   const reconnectPush = async () => {
     if (!("serviceWorker" in navigator)) {
