@@ -15,6 +15,20 @@ class ZeroDB extends Dexie {
       settings: "id",
       categoryRules: "++id, keyword, category, updatedAt",
     });
+    this.version(2)
+      .stores({
+        transactions: "++id, date, type, category, createdAt",
+        subscriptions: "++id, nextBillingDate, cycle, createdAt",
+        settings: "id",
+        categoryRules: "++id, keyword, category, updatedAt",
+      })
+      .upgrade((tx) => {
+        return tx.table("settings").toCollection().modify((setting) => {
+          if (typeof setting.monthlySalary !== "number") {
+            setting.monthlySalary = typeof setting.currentBalance === "number" ? setting.currentBalance : 0;
+          }
+        });
+      });
   }
 }
 
@@ -55,6 +69,7 @@ export async function seedIfEmpty() {
   if (!hasSettings) {
     await db.settings.put({
       id: 1,
+      monthlySalary: 0,
       currentBalance: 0,
       reservedSavings: 0,
       monthlyTargets: { "Food & Drink": 300, Transport: 180, Subscriptions: 100 },

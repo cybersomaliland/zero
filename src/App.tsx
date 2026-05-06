@@ -19,7 +19,7 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Settings: { icon: "settings", label: "Settings" },
 };
 const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
-  { role: "assistant", text: "I am your Zero AI assistant. Ask about spending, subscriptions, or future balance." },
+  { role: "assistant", text: "I am your Zero AI assistant. I use your real balance, salary plan, bills, and spending habits to give personal advice." },
 ];
 
 function App() {
@@ -138,12 +138,13 @@ function App() {
     () => getUpcomingBills(subscriptions, 30).reduce((acc, sub) => acc + sub.amount, 0),
     [subscriptions],
   );
-  const monthlySalary = settings?.currentBalance ?? 0;
+  const monthlySalary = settings?.monthlySalary ?? 0;
+  const realBalance = settings?.currentBalance ?? 0;
   const weeklySalaryAllocation = monthlySalary / 4.33;
   const monthlySavingsReserve = settings?.reservedSavings ?? 0;
   const weeklySavingsReserve = monthlySavingsReserve / 4.33;
   const weeklyRealBalance = weeklySalaryAllocation + weeklyTransactionsNet - weeklyUpcomingSubs - weeklySavingsReserve;
-  const monthlyRealBalance = monthlySalary + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
+  const monthlyRealBalance = realBalance + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
   const daysLeftInMonth = Math.max(
     1,
     differenceInCalendarDays(endOfMonth(new Date()), startOfDay(new Date())) + 1,
@@ -154,8 +155,8 @@ function App() {
   const safePerDay = weeklyAllowanceBase / daysLeftInWeek;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
-    () => (settings ? forecast(transactions, subscriptions, { ...settings, currentBalance: monthlySalary }) : []),
-    [transactions, subscriptions, settings, monthlySalary],
+    () => (settings ? forecast(transactions, subscriptions, settings) : []),
+    [transactions, subscriptions, settings],
   );
   const aiAdvice = useMemo(() => generateAiAdvice(transactions, subscriptions), [transactions, subscriptions]);
   const spendingCalendar = useMemo(() => {
@@ -286,18 +287,21 @@ function App() {
   const askAssistant = async (question: string) => {
     if (!question.trim() || !settings) return;
     const text = question.trim();
-    const nextHistory = [...chat, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
+    const historyBeforeQuestion = [...chat] as Array<{ role: "assistant" | "user"; text: string }>;
+    const nextHistory = [...historyBeforeQuestion, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
     setChat(nextHistory);
     setAssistantBusy(true);
     try {
       const answer = await askGroqFinanceAssistant({
         question: text,
-        chatHistory: nextHistory,
+        chatHistory: historyBeforeQuestion,
         transactions,
         subscriptions,
         settings,
         forecastData,
         financeSnapshot: {
+          monthlySalary,
+          currentBalance: realBalance,
           monthlyRealBalance,
           weeklySafeToUse,
           dailyAllowance: safePerDay,
@@ -678,10 +682,11 @@ function App() {
         {tab === "Settings" && (
           <section className="card">
             <h3>Settings</h3>
-            <label>Monthly salary <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
+            <label>Monthly salary <input type="number" value={settings.monthlySalary ?? 0} onChange={(e) => updateSettings({ monthlySalary: Number(e.target.value) })} /></label>
+            <label>Current balance <input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
             <label>Monthly savings reserve <input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
             <p className="muted">Weekly safe formula: Weekly allocation {money(weeklySalaryAllocation)} + this week Tx {money(weeklyTransactionsNet)} - week subs {money(weeklyUpcomingSubs)} - weekly savings {money(weeklySavingsReserve)}</p>
-            <p className="muted">Monthly balance formula: Salary {money(monthlySalary)} + month Tx {money(monthlyTransactionsNet)} - month subs {money(monthlyUpcomingSubs)} - savings {money(monthlySavingsReserve)}</p>
+            <p className="muted">Monthly balance formula: Current balance {money(realBalance)} + month Tx {money(monthlyTransactionsNet)} - month subs {money(monthlyUpcomingSubs)} - savings {money(monthlySavingsReserve)}</p>
             <div className="inline-actions">
               <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
               <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
@@ -777,16 +782,31 @@ function App() {
         {assistantOpen && (
           <motion.section className="ai-chat" initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.96 }}>
             <div className="ai-chat-head">
-              <div>
-                <p className="ai-chat-kicker">Zero Intelligence</p>
-                <h3>Personal finance co-pilot</h3>
+              <div className="ai-chat-title-wrap">
+                <p className="ai-chat-kicker">ZERO AI</p>
+                <h3>Money Coach</h3>
+                <p className="ai-chat-subtitle">Personalized answers from your balance, salary, and bills.</p>
+                <div className="ai-chat-status-row">
+                  <span className={`ai-engine-pill ${assistantEngine === "groq" ? "connected" : "fallback"}`}>
+                    {assistantEngine === "groq" ? "Live AI" : "Smart fallback"}
+                  </span>
+                  <span className={`ai-status-pill ${assistantBusy ? "busy" : "online"}`}>
+                    {assistantBusy ? "Thinking..." : "Ready"}
+                  </span>
+                </div>
               </div>
               <div className="ai-chat-actions">
-                <span className={`ai-engine-pill ${assistantEngine === "groq" ? "connected" : "fallback"}`}>
-                  {assistantEngine === "groq" ? "Groq connected" : "Fallback mode"}
-                </span>
-                <span className="ai-status-pill">{assistantBusy ? "Thinking" : "Online"}</span>
-                <button type="button" onClick={() => setAssistantOpen(false)}>Close</button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setChat(DEFAULT_CHAT);
+                    localStorage.removeItem("zero_ai_chat_v1");
+                  }}
+                >
+                  Clear chat
+                </button>
+                <button type="button" className="ai-close-btn" onClick={() => setAssistantOpen(false)}>Done</button>
               </div>
             </div>
             {assistantEngine === "fallback" && assistantEngineReason && (

@@ -23,6 +23,7 @@ export type Subscription = {
 
 export type Settings = {
   id: number;
+  monthlySalary: number;
   currentBalance: number;
   reservedSavings: number;
   monthlyTargets: Record<string, number>;

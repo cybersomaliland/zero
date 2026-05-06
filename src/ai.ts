@@ -8,6 +8,8 @@ export async function askGroqFinanceAssistant(params: {
   settings: Settings;
   forecastData: Array<{ date: string; balance: number }>;
   financeSnapshot: {
+    monthlySalary: number;
+    currentBalance: number;
     monthlyRealBalance: number;
     weeklySafeToUse: number;
     dailyAllowance: number;
@@ -25,10 +27,40 @@ export async function askGroqFinanceAssistant(params: {
   const upcomingSubscriptions = [...params.subscriptions]
     .sort((a, b) => +new Date(a.nextBillingDate) - +new Date(b.nextBillingDate))
     .slice(0, 40);
+  const expenseTransactions = params.transactions.filter((t) => t.type === "expense");
+  const spendingByCategory = expenseTransactions.reduce<Record<string, number>>((acc, tx) => {
+    acc[tx.category] = (acc[tx.category] || 0) + Math.abs(tx.amount);
+    return acc;
+  }, {});
+  const topSpendingCategories = Object.entries(spendingByCategory)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([category, amount]) => ({ category, amount }));
+  const recentIncomeTotal = params.transactions
+    .filter((t) => t.type === "income")
+    .slice(-20)
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+  const recentExpenseTotal = expenseTransactions.slice(-80).reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
 
   const context = {
     financeSnapshot: params.financeSnapshot,
     settings: params.settings,
+    understandingGuide: {
+      definitions: {
+        currentBalance: "Real cash currently available in account.",
+        monthlySalary: "Planned monthly income target.",
+        monthlyRealBalance: "Current balance adjusted by this month's net flow and upcoming bills/savings.",
+        weeklySafeToUse: "Recommended safe amount to use this week.",
+      },
+      responseStyle: "Personal, practical, short, and number-driven.",
+    },
+    financialSummary: {
+      transactionCount: params.transactions.length,
+      subscriptionCount: params.subscriptions.length,
+      recentIncomeTotal,
+      recentExpenseTotal,
+      topSpendingCategories,
+    },
     recentTransactions,
     upcomingSubscriptions,
     forecastData: params.forecastData.slice(0, 30),
