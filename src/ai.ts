@@ -24,6 +24,24 @@ export async function askGroqFinanceAssistant(params: {
     weeklyIncome: number;
     weeklyUpcomingSubs: number;
   };
+  routineSnapshot: {
+    userName: string;
+    timeOfDay: "morning" | "afternoon" | "evening" | "night";
+    currentBlock: { title: string; category: string; minutesLeft: number } | null;
+    todayTimeline: Array<{ hour: number; title: string; category: string; durationMinutes?: number }>;
+    checklist: {
+      completedCount: number;
+      totalCount: number;
+      tasks: Array<{ title: string; priority: string; done: boolean }>;
+    };
+    templateBlocks: Array<{ hour: number; name: string; category: string; durationMinutes: number }>;
+    planAhead: {
+      tomorrow: Array<{ dayLabel: string; hour: number; title: string; category: string }>;
+      laterThisWeek: Array<{ dayLabel: string; hour: number; title: string; category: string }>;
+    };
+    activeReminders: Array<{ label: string; delaySeconds: number; enabled: boolean }>;
+  };
+  onToken?: (chunk: string) => void;
   signal?: AbortSignal;
 }) {
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -85,6 +103,61 @@ export async function askGroqFinanceAssistant(params: {
   }, 0);
   const nearestForecastPoint = params.forecastData[0] ?? null;
   const lowestForecastPoint = [...params.forecastData].sort((a, b) => a.balance - b.balance)[0] ?? null;
+  const currentBlockLine = params.routineSnapshot.currentBlock
+    ? `${params.routineSnapshot.currentBlock.title} (${params.routineSnapshot.currentBlock.category}), ${params.routineSnapshot.currentBlock.minutesLeft} min left`
+    : "No activity scheduled right now";
+  const timelineLine = params.routineSnapshot.todayTimeline.length > 0
+    ? params.routineSnapshot.todayTimeline
+      .slice(0, 12)
+      .map((b) => {
+        const h = b.hour > 12 ? `${b.hour - 12}pm` : b.hour === 12 ? "12pm" : `${b.hour}am`;
+        return `${h} ${b.title} [${b.category}]`;
+      })
+      .join(" | ")
+    : "No blocks scheduled today";
+  const checklistLine = params.routineSnapshot.checklist.totalCount > 0
+    ? `${params.routineSnapshot.checklist.completedCount}/${params.routineSnapshot.checklist.totalCount} done: ${params.routineSnapshot.checklist.tasks
+      .slice(0, 8)
+      .map((t) => `${t.done ? "done" : "open"} ${t.title} (${t.priority})`)
+      .join("; ")}`
+    : "No tasks in today's checklist";
+  const templateLine = params.routineSnapshot.templateBlocks.length > 0
+    ? params.routineSnapshot.templateBlocks
+      .slice(0, 8)
+      .map((b) => {
+        const h = b.hour > 12 ? `${b.hour - 12}pm` : b.hour === 12 ? "12pm" : `${b.hour}am`;
+        return `${h} ${b.name} (${b.durationMinutes}m, ${b.category})`;
+      })
+      .join(" | ")
+    : "Routine template is empty";
+  const tomorrowLine = params.routineSnapshot.planAhead.tomorrow.length > 0
+    ? params.routineSnapshot.planAhead.tomorrow
+      .slice(0, 6)
+      .map((i) => `${i.dayLabel} ${i.hour > 12 ? `${i.hour - 12}pm` : i.hour === 12 ? "12pm" : `${i.hour}am`} ${i.title} (${i.category})`)
+      .join(" | ")
+    : "No plan-ahead items for tomorrow";
+  const weekLine = params.routineSnapshot.planAhead.laterThisWeek.length > 0
+    ? params.routineSnapshot.planAhead.laterThisWeek
+      .slice(0, 6)
+      .map((i) => `${i.dayLabel} ${i.hour > 12 ? `${i.hour - 12}pm` : i.hour === 12 ? "12pm" : `${i.hour}am`} ${i.title} (${i.category})`)
+      .join(" | ")
+    : "No plan-ahead items later this week";
+  const remindersLine = params.routineSnapshot.activeReminders.length > 0
+    ? params.routineSnapshot.activeReminders
+      .slice(0, 6)
+      .map((r) => `${r.label} in ${Math.max(1, Math.round(r.delaySeconds / 60))}m (${r.enabled ? "on" : "off"})`)
+      .join(" | ")
+    : "No active reminders";
+  const routineContextSummary = [
+    `User: ${params.routineSnapshot.userName}. Time of day: ${params.routineSnapshot.timeOfDay}.`,
+    `Current block: ${currentBlockLine}.`,
+    `Today's timeline: ${timelineLine}.`,
+    `Checklist: ${checklistLine}.`,
+    `Template: ${templateLine}.`,
+    `Plan ahead tomorrow: ${tomorrowLine}.`,
+    `Plan ahead this week: ${weekLine}.`,
+    `Reminders: ${remindersLine}.`,
+  ].join("\n");
 
   const context = {
     meta: {
@@ -93,6 +166,8 @@ export async function askGroqFinanceAssistant(params: {
       currency: "USD",
     },
     financeSnapshot: params.financeSnapshot,
+    routineSnapshot: params.routineSnapshot,
+    routineContextSummary,
     settings: params.settings,
     understandingGuide: {
       definitions: {
@@ -138,8 +213,9 @@ export async function askGroqFinanceAssistant(params: {
     },
     body: JSON.stringify({
       question: params.question,
-      chatHistory: params.chatHistory,
+      chatHistory: params.chatHistory.slice(-10),
       context,
+      stream: true,
     }),
     signal: params.signal,
   });
@@ -155,10 +231,19 @@ export async function askGroqFinanceAssistant(params: {
     throw new Error(`Groq request failed: ${response.status}${detail ? ` - ${detail}` : ""}`);
   }
 
-  const data = await response.json() as {
-    answer?: string;
-  };
-  const content = data.answer?.trim();
+  if (!response.body) throw new Error("Groq stream unavailable");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let content = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    if (!chunk) continue;
+    content += chunk;
+    params.onToken?.(chunk);
+  }
+  content = content.trim();
   if (!content) throw new Error("Groq empty response");
   return content;
 }

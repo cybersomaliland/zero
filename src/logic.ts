@@ -45,7 +45,7 @@ export function computeBudgetSnapshot(
   // Treat currentBalance as the money basis the user entered in settings.
   const monthlyRealBalance = settings.currentBalance - remainingMonthSubscriptions;
   const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
-  const weeklySafeToUse = Math.max(0, dailyAllowance * Math.min(daysLeftInWeek, daysLeftInMonth));
+  const weeklySafeToUse = Math.max(0, (settings.currentBalance / daysLeftInMonth) * Math.min(daysLeftInWeek, daysLeftInMonth));
   const todayRemaining = dailyAllowance - todaySpent;
   const weeklySpent = transactions
     .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }))

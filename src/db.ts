@@ -6,6 +6,7 @@ class ZeroDB extends Dexie {
   subscriptions!: Table<Subscription, number>;
   settings!: Table<Settings, number>;
   categoryRules!: Table<CategoryRule, number>;
+  routinePlans!: Table<{ id?: number; date: string; title: string; hour: number; category: string; createdAt: string }, number>;
 
   constructor() {
     super("zero_db");
@@ -43,6 +44,13 @@ class ZeroDB extends Dexie {
           }
         });
       });
+    this.version(4).stores({
+      transactions: "++id, date, type, category, createdAt",
+      subscriptions: "++id, nextBillingDate, cycle, createdAt",
+      settings: "id",
+      categoryRules: "++id, keyword, category, updatedAt",
+      routinePlans: "++id, date, hour, category, createdAt",
+    });
   }
 }
 

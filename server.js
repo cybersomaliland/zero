@@ -337,31 +337,37 @@ app.post("/api/groq", async (req, res) => {
     const question = sanitizeQuestion(body.question);
     const chatHistory = sanitizeChatHistory(body.chatHistory);
     const context = sanitizeContext(body.context ?? {});
+    const stream = Boolean(body.stream);
 
     if (!question.trim()) {
       return res.status(400).json({ error: "Missing question" });
     }
 
     const systemPrompt = [
-      "You are Zero AI, an elite personal finance copilot for one user.",
-      "Your job: convert the user's question and provided app data into clear, practical money guidance.",
+      "You are Coach Zero: calm, direct, encouraging, and human, like a smart friend who knows this user's money and routine.",
+      "Use the provided profile, finance, tasks, meals, and time-of-day context in every reply.",
+      "",
+      "## Routine Context",
+      String(context?.routineContextSummary || "Routine context unavailable."),
       "",
       "Core rules:",
       "1) Use only provided data; never invent balances, transactions, dates, subscriptions, income, or events.",
       "2) Treat financeSnapshot as highest-priority source of truth when present.",
       "3) Never confuse financeSnapshot.currentBalance (cash now) with financeSnapshot.monthlySalary (planned monthly income).",
-      "4) If data is insufficient or ambiguous, ask exactly one specific clarifying question and stop.",
-      "5) Keep response concise, actionable, and personalized.",
-      "",
-      "Response format:",
-      "- Line 1: direct answer/verdict (e.g., yes/no, safe/not safe, top finding).",
-      "- Line 2: key numbers that justify the answer (2-4 numbers max).",
-      "- Line 3: one concrete next action for today or this week.",
-      "- Line 4: optional follow-up question only if it materially improves accuracy.",
+      "4) Keep responses short and punchy by default; go longer only when the question requires depth.",
+      "5) Use casual natural language, contractions, and occasional light humor.",
+      "6) Never use bullet points or formal corporate language unless the user explicitly asks for it.",
+      "7) Remember the conversation context and reference it naturally when relevant.",
+      "8) Occasionally ask one follow-up question to keep momentum, but not on every turn.",
+      "9) If data is insufficient or ambiguous, ask one specific clarifying question instead of guessing.",
+      "10) If user asks what to do now, answer from the current timeline block first.",
+      "11) If it is late and checklist completion is low, mention it proactively and suggest a realistic next step.",
+      "12) If routine template is empty, suggest setting up a simple template.",
+      "13) Cross-reference routine and finance context when useful (e.g., bills due + no admin block).",
       "",
       "Style constraints:",
       "- No raw JSON, no long lists, no generic disclaimers.",
-      "- Prefer short sentences and exact numbers from context.",
+      "- Prefer short sentences, exact numbers, and concrete next actions.",
       "- If prior chat exists, maintain continuity with it.",
     ].join("\n");
 
@@ -374,7 +380,7 @@ app.post("/api/groq", async (req, res) => {
         role: "user",
         content: `User finance data JSON:\n${JSON.stringify(context)}`,
       },
-      ...chatHistory.map((m) => ({
+      ...chatHistory.slice(-10).map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: String(m.text ?? ""),
       })),
@@ -394,24 +400,62 @@ app.post("/api/groq", async (req, res) => {
         model: GROQ_MODEL,
         temperature: 0.2,
         max_tokens: 500,
+        stream,
         messages,
       }),
     });
 
-    const data = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json({
+    if (!stream) {
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: "Groq request failed",
+          detail: data?.error?.message || data?.error || "Unknown error",
+        });
+      }
+      const content = data?.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        return res.status(502).json({ error: "Groq returned empty content" });
+      }
+      return res.status(200).json({ answer: content });
+    }
+
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      return res.status(response.status || 502).json({
         error: "Groq request failed",
         detail: data?.error?.message || data?.error || "Unknown error",
       });
     }
 
-    const content = data?.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      return res.status(502).json({ error: "Groq returned empty content" });
-    }
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
 
-    return res.status(200).json({ answer: content });
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const json = JSON.parse(payload);
+          const piece = json?.choices?.[0]?.delta?.content;
+          if (typeof piece === "string" && piece.length > 0) {
+            res.write(piece);
+          }
+        } catch {
+          // ignore malformed stream events
+        }
+      }
+    }
+    return res.end();
   } catch (error) {
     return res.status(500).json({
       error: "Proxy request failed",

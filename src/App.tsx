@@ -3,6 +3,7 @@ import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, format
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
+import { db } from "./db";
 import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { useZeroStore } from "./store";
@@ -22,8 +23,12 @@ const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
 ];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
+type TimelineEvent = { id: number; title: string; hour: number; category: TimelineCategory; durationMinutes?: number };
+type RoutineTemplateBlock = { id: number; name: string; hour: number; durationMinutes: number; category: TimelineCategory };
+type PlanAheadItem = { id?: number; date: string; title: string; hour: number; category: TimelineCategory; createdAt: string };
+type RoutineReminderItem = { id: number; label: string; delaySeconds: number; enabled: boolean };
 type RoutineDaySnapshot = {
-  timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
+  timelineEvents: TimelineEvent[];
   tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
   meals: Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>;
   ritualEnergy: number;
@@ -71,16 +76,23 @@ function App() {
   const [ritualAvoid, setRitualAvoid] = useState("");
   const [ritualEnergy, setRitualEnergy] = useState<number>(3);
   const [timelineSortAsc, setTimelineSortAsc] = useState(true);
-  const [timelineEvents, setTimelineEvents] = useState<Array<{ id: number; title: string; hour: number; category: TimelineCategory }>>([]);
-  const [timelineTitle, setTimelineTitle] = useState("");
-  const [routineReminderTitle, setRoutineReminderTitle] = useState("Routine reminder");
-  const [routineReminderBody, setRoutineReminderBody] = useState("Time to review your routine and next priority.");
-  const [routineReminderDelaySec, setRoutineReminderDelaySec] = useState("1800");
-  const [remindersEnabled, setRemindersEnabled] = useState(true);
-  const [coachNudgesEnabled, setCoachNudgesEnabled] = useState(true);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const routineReminderBody = "Time to review your routine and next priority.";
+  const [coachNudgesEnabled] = useState(true);
   const [showReminderSheet, setShowReminderSheet] = useState(false);
   const [meals, setMeals] = useState<Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>>([]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
+  const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplateBlock[]>([]);
+  const [planAheadItems, setPlanAheadItems] = useState<PlanAheadItem[]>([]);
+  const [routineReminders, setRoutineReminders] = useState<RoutineReminderItem[]>([]);
+  const [showTimelineSheet, setShowTimelineSheet] = useState(false);
+  const [editingTimelineEvent, setEditingTimelineEvent] = useState<TimelineEvent | null>(null);
+  const [showTemplateSheet, setShowTemplateSheet] = useState(false);
+  const [editingTemplateBlock, setEditingTemplateBlock] = useState<RoutineTemplateBlock | null>(null);
+  const [showPlanAheadSheet, setShowPlanAheadSheet] = useState(false);
+  const [editingPlanAheadItem, setEditingPlanAheadItem] = useState<PlanAheadItem | null>(null);
+  const [showRoutineReminderSheet, setShowRoutineReminderSheet] = useState(false);
+  const [editingRoutineReminder, setEditingRoutineReminder] = useState<RoutineReminderItem | null>(null);
   const [reflectionOne, setReflectionOne] = useState("");
   const [reflectionTwo, setReflectionTwo] = useState("");
   const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
@@ -111,6 +123,7 @@ function App() {
   const [scheduledNotifAt, setScheduledNotifAt] = useState<number | null>(null);
   const [timerNow, setTimerNow] = useState<number>(Date.now());
   const scheduledNotifTimeoutRef = useRef<number | null>(null);
+  const routineNotificationCacheRef = useRef<Record<string, 1>>({});
 
   useEffect(() => {
     void init();
@@ -140,7 +153,7 @@ function App() {
         ritualAvoid: string;
         ritualEnergy: number;
         timelineSortAsc: boolean;
-        timelineEvents: Array<{ id: number; title: string; hour: number; category: TimelineCategory }>;
+        timelineEvents: TimelineEvent[];
         meals: Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>;
         tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
         reflectionOne: string;
@@ -236,6 +249,35 @@ function App() {
     dayClosed,
   ]);
   useEffect(() => {
+    try {
+      const rawTemplate = localStorage.getItem("zero_routine_template_v1");
+      if (rawTemplate) {
+        const parsed = JSON.parse(rawTemplate) as RoutineTemplateBlock[];
+        if (Array.isArray(parsed)) setRoutineTemplate(parsed);
+      }
+      const rawReminders = localStorage.getItem("zero_routine_reminders_v1");
+      if (rawReminders) {
+        const parsed = JSON.parse(rawReminders) as RoutineReminderItem[];
+        if (Array.isArray(parsed)) setRoutineReminders(parsed);
+      }
+    } catch {
+      // ignore corrupt cache
+    }
+  }, []);
+  useEffect(() => {
+    localStorage.setItem("zero_routine_template_v1", JSON.stringify(routineTemplate));
+  }, [routineTemplate]);
+  useEffect(() => {
+    localStorage.setItem("zero_routine_reminders_v1", JSON.stringify(routineReminders));
+  }, [routineReminders]);
+  useEffect(() => {
+    void db.table("routinePlans").toArray().then((rows) => {
+      setPlanAheadItems(rows as PlanAheadItem[]);
+    }).catch(() => {
+      setPlanAheadItems([]);
+    });
+  }, []);
+  useEffect(() => {
     if (!settings) return;
     const key = `zero_morning_briefing_seen_${format(new Date(), "yyyy-MM-dd")}`;
     const alreadySeen = localStorage.getItem(key);
@@ -261,6 +303,59 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
+  useEffect(() => {
+    if (notifState !== "granted") return;
+    if (!("serviceWorker" in navigator)) return;
+    if (timelineEvents.length === 0) return;
+
+    const checkRoutineNotifications = async () => {
+      const now = new Date();
+      const nowMs = now.getTime();
+      const dayKey = format(now, "yyyy-MM-dd");
+      const registration = await navigator.serviceWorker.ready;
+
+      for (const event of timelineEvents) {
+        const startAt = new Date(now);
+        startAt.setHours(event.hour, 0, 0, 0);
+        const endAt = new Date(startAt.getTime() + Math.max(15, event.durationMinutes ?? 60) * 60_000);
+
+        const startDelta = nowMs - startAt.getTime();
+        const endDelta = nowMs - endAt.getTime();
+        const startKey = `${dayKey}_${event.id}_start`;
+        const endKey = `${dayKey}_${event.id}_end`;
+
+        if (startDelta >= 0 && startDelta < 60_000 && !routineNotificationCacheRef.current[startKey]) {
+          await registration.showNotification("Routine block started", {
+            body: `${event.title} is starting now.`,
+            icon: "/icon.svg",
+            badge: "/icon.svg",
+            tag: startKey,
+            data: { url: "/" },
+          });
+          routineNotificationCacheRef.current[startKey] = 1;
+        }
+
+        if (endDelta >= 0 && endDelta < 60_000 && !routineNotificationCacheRef.current[endKey]) {
+          await registration.showNotification("Routine block finished", {
+            body: `${event.title} just ended. Time for your next move.`,
+            icon: "/icon.svg",
+            badge: "/icon.svg",
+            tag: endKey,
+            data: { url: "/" },
+          });
+          routineNotificationCacheRef.current[endKey] = 1;
+        }
+      }
+
+      localStorage.setItem("zero_routine_notified_v1", JSON.stringify(routineNotificationCacheRef.current));
+    };
+
+    void checkRoutineNotifications();
+    const id = window.setInterval(() => {
+      void checkRoutineNotifications();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [notifState, timelineEvents]);
 
   const refreshNews = async () => {
     const controller = new AbortController();
@@ -388,6 +483,33 @@ function App() {
     copy.sort((a, b) => timelineSortAsc ? a.hour - b.hour : b.hour - a.hour);
     return copy;
   }, [timelineEvents, timelineSortAsc]);
+  const currentTimelineBlock = useMemo(() => {
+    const now = new Date();
+    const minuteOfDay = now.getHours() * 60 + now.getMinutes();
+    const active = sortedTimelineEvents.find((event) => {
+      const start = event.hour * 60;
+      const duration = Math.max(15, event.durationMinutes ?? 60);
+      return minuteOfDay >= start && minuteOfDay < start + duration;
+    });
+    if (!active) return null;
+    const endMinute = active.hour * 60 + Math.max(15, active.durationMinutes ?? 60);
+    return { ...active, minutesLeft: Math.max(0, endMinute - minuteOfDay) };
+  }, [sortedTimelineEvents, currentHour]);
+  const routineHours = useMemo(() => Array.from({ length: 18 }, (_, i) => i + 6), []);
+  const taskPriorityWeight: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
+  const todayChecklist = useMemo(
+    () => [...tasks].sort((a, b) => taskPriorityWeight[a.priority] - taskPriorityWeight[b.priority]),
+    [tasks],
+  );
+  const tomorrowLabel = format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd");
+  const tomorrowPlans = useMemo(
+    () => planAheadItems.filter((item) => item.date === tomorrowLabel).sort((a, b) => a.hour - b.hour),
+    [planAheadItems, tomorrowLabel],
+  );
+  const laterWeekPlans = useMemo(
+    () => planAheadItems.filter((item) => item.date > tomorrowLabel).sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour),
+    [planAheadItems, tomorrowLabel],
+  );
   const mealStats = useMemo(() => {
     const planned = meals.length;
     const completed = meals.filter((m) => m.done).length;
@@ -442,6 +564,31 @@ function App() {
     if (fallbackHeadline) items.push(`News watch: ${fallbackHeadline.title}`);
     return items.slice(0, 4);
   }, [todayRemaining, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
+  const smartSavingsTip = useMemo(() => {
+    const safeToday = Math.max(0, todayRemaining);
+    const dailySaveTarget = Math.max(1, safePerDay * 0.25);
+    const projectedThreeDayBoost = dailySaveTarget * 3;
+    const projectedSpendingRoom = safeToday + projectedThreeDayBoost;
+    const foodBudgetAfterThreeDays = Math.max(2, projectedSpendingRoom * 0.35);
+
+    if (safePerDay <= 0) {
+      return "Set your balance and upcoming bills first, then I can generate a realistic daily saving plan.";
+    }
+    if (todayRemaining < 0) {
+      return `Recovery mode: keep food to essentials today and save ${money(dailySaveTarget)} per day for 3 days to rebuild about ${money(projectedThreeDayBoost)}.`;
+    }
+    return `Save about ${money(dailySaveTarget)} per day for 3 days and you'll add around ${money(projectedThreeDayBoost)} buffer. Then a safe food budget is about ${money(foodBudgetAfterThreeDays)}.`;
+  }, [todayRemaining, safePerDay]);
+  const allowanceProgressPct = useMemo(() => {
+    if (safePerDay <= 0) return 0;
+    return Math.min(100, Math.max(0, (Math.max(0, todaySpent) / safePerDay) * 100));
+  }, [todaySpent, safePerDay]);
+  const savePlan = useMemo(() => {
+    const savePerDay = Math.max(1, safePerDay * 0.25);
+    const inThreeDays = savePerDay * 3;
+    const foodBudget = Math.max(2, (Math.max(0, todayRemaining) + inThreeDays) * 0.35);
+    return { savePerDay, inThreeDays, foodBudget };
+  }, [safePerDay, todayRemaining]);
   const morningCoachBriefing = useMemo(() => {
     const preferredName = settings?.profileName?.trim() || "Guled Abdi";
     const greeting = currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : "Good evening";
@@ -644,37 +791,48 @@ function App() {
       }, delaySec * 1000);
     });
   };
-  const scheduleRoutineReminder = async () => {
-    if (!remindersEnabled) {
-      setPushStatusDetail("Enable reminders toggle first.");
-      return;
+  const applyTemplateToToday = () => {
+    if (routineTemplate.length === 0) return;
+    const mapped: TimelineEvent[] = routineTemplate.map((block) => ({
+      id: Date.now() + Math.floor(Math.random() * 1000) + block.id,
+      title: block.name,
+      hour: block.hour,
+      durationMinutes: block.durationMinutes,
+      category: block.category,
+    }));
+    setTimelineEvents(mapped.sort((a, b) => a.hour - b.hour));
+  };
+  const savePlanAheadItem = async (item: PlanAheadItem) => {
+    if (item.id) {
+      await db.table("routinePlans").put(item);
+    } else {
+      await db.table("routinePlans").add(item);
     }
-    if (notifState !== "granted") {
-      setPushStatusDetail("Enable notifications first.");
-      return;
+    const rows = await db.table("routinePlans").toArray();
+    setPlanAheadItems(rows as PlanAheadItem[]);
+  };
+  const deletePlanAheadItem = async (id?: number) => {
+    if (!id) return;
+    await db.table("routinePlans").delete(id);
+    const rows = await db.table("routinePlans").toArray();
+    setPlanAheadItems(rows as PlanAheadItem[]);
+  };
+  const scheduleReminderItem = async (item: RoutineReminderItem) => {
+    if (!item.enabled) return;
+    try {
+      await fetch("/api/schedule-notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.label,
+          body: `Routine reminder: ${item.label}`,
+          displayName: settings?.profileName || "there",
+          delaySeconds: item.delaySeconds,
+        }),
+      });
+    } catch {
+      // ignore schedule failures here
     }
-    const title = routineReminderTitle.trim();
-    const body = routineReminderBody.trim();
-    const preferredName = settings?.profileName?.trim() || "there";
-    const parsedDelay = Number(routineReminderDelaySec);
-    const delaySec = Math.max(60, Math.min(86_400, Number.isFinite(parsedDelay) ? Math.floor(parsedDelay) : 1800));
-    if (!title || !body) {
-      setPushStatusDetail("Reminder title and message are required.");
-      return;
-    }
-    setRoutineReminderDelaySec(String(delaySec));
-    const response = await fetch("/api/schedule-notification", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body, displayName: preferredName, delaySeconds: delaySec }),
-    });
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      setPushStatusDetail(String(errorBody?.error || "Failed to schedule routine reminder."));
-      return;
-    }
-    setPushStatusDetail(`Routine reminder scheduled in ${Math.floor(delaySec / 60)} min.`);
-    setShowReminderSheet(true);
   };
   const sendAiNotification = async () => {
     if (!coachNudgesEnabled) {
@@ -813,12 +971,14 @@ function App() {
   const askAssistant = async (question: string) => {
     if (!question.trim() || !settings) return;
     const text = question.trim();
-    const historyBeforeQuestion = [...chat] as Array<{ role: "assistant" | "user"; text: string }>;
+    const historyBeforeQuestion = [...chat].slice(-10) as Array<{ role: "assistant" | "user"; text: string }>;
     const nextHistory = [...historyBeforeQuestion, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
     setChat(nextHistory);
     setAssistantBusy(true);
     try {
       const actionNotes = await runAssistantAutomation(text);
+      let streamedAnswer = "";
+      let streamMounted = false;
       const answer = await askGroqFinanceAssistant({
         question: text,
         chatHistory: historyBeforeQuestion,
@@ -838,13 +998,82 @@ function App() {
           weeklyIncome,
           weeklyUpcomingSubs,
         },
+        routineSnapshot: {
+          userName: (settings.profileName || "there").trim() || "there",
+          currentBlock: currentTimelineBlock
+            ? {
+              title: currentTimelineBlock.title,
+              category: currentTimelineBlock.category,
+              minutesLeft: currentTimelineBlock.minutesLeft,
+            }
+            : null,
+          todayTimeline: sortedTimelineEvents.map((e) => ({
+            hour: e.hour,
+            title: e.title,
+            category: e.category,
+            durationMinutes: e.durationMinutes,
+          })),
+          checklist: {
+            completedCount: doneTasks,
+            totalCount: tasks.length,
+            tasks: tasks.map((t) => ({ title: t.title, priority: t.priority, done: t.done })),
+          },
+          templateBlocks: routineTemplate.map((b) => ({
+            hour: b.hour,
+            name: b.name,
+            category: b.category,
+            durationMinutes: b.durationMinutes,
+          })),
+          planAhead: {
+            tomorrow: tomorrowPlans.map((i) => ({
+              dayLabel: format(new Date(i.date), "EEE"),
+              hour: i.hour,
+              title: i.title,
+              category: i.category,
+            })),
+            laterThisWeek: laterWeekPlans.map((i) => ({
+              dayLabel: format(new Date(i.date), "EEE"),
+              hour: i.hour,
+              title: i.title,
+              category: i.category,
+            })),
+          },
+          activeReminders: routineReminders.map((r) => ({
+            label: r.label,
+            delaySeconds: r.delaySeconds,
+            enabled: r.enabled,
+          })),
+          timeOfDay: currentHour < 12 ? "morning" : currentHour < 17 ? "afternoon" : currentHour < 22 ? "evening" : "night",
+        },
+        onToken: (chunk) => {
+          streamedAnswer += chunk;
+          if (!streamMounted) {
+            streamMounted = true;
+            setChat((c) => [...c, { role: "assistant", text: chunk }]);
+            return;
+          }
+          setChat((c) => {
+            if (c.length === 0) return [{ role: "assistant", text: chunk }];
+            const last = c[c.length - 1];
+            if (last.role !== "assistant") return [...c, { role: "assistant", text: chunk }];
+            return [...c.slice(0, -1), { ...last, text: last.text + chunk }];
+          });
+        },
       });
       setAssistantEngine("groq");
       setAssistantEngineReason("");
-      const withActions = actionNotes.length > 0
-        ? `${answer}\n\nActions completed:\n- ${actionNotes.join("\n- ")}`
-        : answer;
-      setChat((c) => [...c, { role: "assistant", text: withActions }]);
+      const base = streamedAnswer.trim() || answer;
+      const withActions = actionNotes.length > 0 ? `${base}\n\nActions completed:\n- ${actionNotes.join("\n- ")}` : base;
+      setChat((c) => {
+        const copy = [...c];
+        for (let i = copy.length - 1; i >= 0; i -= 1) {
+          if (copy[i].role === "assistant") {
+            copy[i] = { ...copy[i], text: withActions };
+            return copy;
+          }
+        }
+        return [...copy, { role: "assistant", text: withActions }];
+      });
     } catch (error) {
       const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
       setAssistantEngine("fallback");
@@ -861,6 +1090,16 @@ function App() {
       return;
     }
     setNotifState(Notification.permission as "default" | "granted" | "denied");
+  }, []);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("zero_routine_notified_v1");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, 1>;
+      if (parsed && typeof parsed === "object") routineNotificationCacheRef.current = parsed;
+    } catch {
+      // ignore corrupt cache
+    }
   }, []);
   useEffect(() => {
     if (notifState !== "granted") return;
@@ -1042,36 +1281,42 @@ function App() {
               )}
             </section>
             <section className="home-intro briefing-card">
-              <div className="row">
+              <div className="briefing-head">
                 <div>
                   <p className="home-kicker">Daily briefing</p>
                   <h2 className="home-title">Today at a glance</h2>
                 </div>
-                <span className="briefing-score">{overallScore}%</span>
+                <span className="briefing-score">{overallScore}% focus</span>
               </div>
+              <p className="briefing-summary">
+                {dailyBriefing.openTasks > 0
+                  ? `${dailyBriefing.openTasks} task(s) still open. Lock your top one now and protect your spending pace.`
+                  : "Tasks are clear. Keep your money pace steady and finish the day strong."}
+              </p>
               <div className="briefing-grid">
-                <article>
-                  <p className="muted">Money</p>
-                  <strong className={todayRemaining < 0 ? "negative" : "positive"}>{dailyBriefing.moneySignal}</strong>
+                <article className="briefing-item money">
+                  <p className="muted">Money pace</p>
+                  <strong className={todayRemaining < 0 ? "negative" : "positive"}>
+                    {todayRemaining < 0 ? `${money(Math.abs(todayRemaining))} over` : `${money(todayRemaining)} left`}
+                  </strong>
+                  <span className="muted">{dailyBriefing.moneySignal}</span>
                 </article>
-                <article>
-                  <p className="muted">Meals</p>
-                  <strong>{dailyBriefing.mealSignal}</strong>
-                </article>
-                <article>
+                <article className="briefing-item">
                   <p className="muted">Tasks</p>
                   <strong>{dailyBriefing.taskSignal}</strong>
+                  <span className="muted">{dailyBriefing.openTasks} open</span>
                 </article>
-                <article>
-                  <p className="muted">Next 3d bills</p>
+                <article className="briefing-item">
+                  <p className="muted">Savings</p>
+                  <strong>{money(savePlan.savePerDay)}</strong>
+                  <span className="muted">daily save target</span>
+                </article>
+                <article className="briefing-item">
+                  <p className="muted">Bills (3d)</p>
                   <strong>{dailyBriefing.nextBills}</strong>
+                  <span className="muted">upcoming reminders</span>
                 </article>
               </div>
-              <p className="muted">
-                {dailyBriefing.openTasks > 0
-                  ? `${dailyBriefing.openTasks} open task(s) left. Prioritize top 1 before evening.`
-                  : "You are clear on tasks. Protect your spending pace and close strong."}
-              </p>
             </section>
 
             <div className="home-section-head">
@@ -1147,32 +1392,26 @@ function App() {
               <p className="muted">Soft guidance, no strict warnings</p>
             </div>
             <section className="card daily-goal-card">
-              <div className="row">
-                <h3>Daily allowance goal</h3>
-                <span className="goal-pill">{money(safePerDay)}</span>
+              <div className="daily-allowance-head">
+                <div>
+                  <p className="muted">Daily allowance goal</p>
+                  <h3>{money(safePerDay)}</h3>
+                </div>
+                <span className="goal-pill">{allowanceProgressPct.toFixed(0)}% used</span>
               </div>
               <p className="muted">Based on your monthly real balance spread across remaining month days.</p>
-              <div className="daily-goal-ring-wrap">
-                <div
-                  className="daily-goal-ring"
-                  style={{
-                    background: `conic-gradient(#0a84ff ${Math.min(
-                      100,
-                      Math.max(0, (Math.abs(weeklySpent - weeklyIncome) / Math.max(1, safePerDay * 7)) * 100),
-                    )}%, #e6ebf5 0%)`,
-                  }}
-                >
-                  <div className="daily-goal-inner">
-                    <p className="muted">Today target</p>
-                    <strong>{money(safePerDay)}</strong>
-                  </div>
-                </div>
+              <div className="daily-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={allowanceProgressPct}>
+                <div className="daily-progress-fill" style={{ width: `${allowanceProgressPct}%` }} />
               </div>
-              <div className="snapshot-grid">
+              <div className="daily-allowance-grid">
                 <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
                 <article><p className="muted">Left for today</p><strong className={todayRemaining < 0 ? "negative" : "positive"}>{money(todayRemaining)}</strong></article>
+                <article><p className="muted">Save daily (3-day plan)</p><strong>{money(savePlan.savePerDay)}</strong></article>
+                <article><p className="muted">Extra buffer in 3 days</p><strong className="positive">{money(savePlan.inThreeDays)}</strong></article>
+                <article><p className="muted">Food budget after 3 days</p><strong>{money(savePlan.foodBudget)}</strong></article>
                 <article><p className="muted">Bills due this week</p><strong>{money(weeklyUpcomingSubs)}</strong></article>
               </div>
+              <p className="daily-tip">{smartSavingsTip}</p>
             </section>
 
             <div className="home-section-head">
@@ -1193,26 +1432,26 @@ function App() {
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((w) => <span key={w}>{w}</span>)}
               </div>
               <div className="calendar-grid">
-                {spendingCalendar.map((cell) =>
-                  cell.blank ? (
-                    <div key={cell.key} className="calendar-cell blank" />
-                  ) : (
+                {spendingCalendar.map((cell) => {
+                  if (cell.blank) return <div key={cell.key} className="calendar-cell blank" />;
+                  const fullCell = cell as { key: string; blank: false; day: string; amount: number; today: boolean };
+                  return (
                     <button
-                      key={cell.key}
+                      key={fullCell.key}
                       type="button"
-                      className={`calendar-cell ${cell.today ? "today" : ""} ${selectedCalendarDay === cell.key ? "selected" : ""}`}
+                      className={`calendar-cell ${fullCell.today ? "today" : ""} ${selectedCalendarDay === fullCell.key ? "selected" : ""}`}
                       onClick={() => {
-                        setSelectedCalendarDay(cell.key);
+                        setSelectedCalendarDay(fullCell.key);
                         setShowCalendarDaySheet(true);
                       }}
                     >
-                      <span className="day">{cell.day}</span>
-                      <span className={`amt ${cell.amount > 0 ? "spent" : ""}`}>
-                        {cell.amount > 0 ? money(cell.amount) : "-"}
+                      <span className="day">{fullCell.day}</span>
+                      <span className={`amt ${fullCell.amount > 0 ? "spent" : ""}`}>
+                        {fullCell.amount > 0 ? money(fullCell.amount) : "-"}
                       </span>
                     </button>
-                  ),
-                )}
+                  );
+                })}
               </div>
             </section>
           </div>
@@ -1252,106 +1491,148 @@ function App() {
 
         {tab === "Insights" && (
           <div className="routine-layout">
-            <section className="card routine-card routine-card-equal">
+            <section className="card routine-card">
+              <p className="routine-section-kicker">RIGHT NOW</p>
+              {currentTimelineBlock ? (
+                <div className="routine-now-card">
+                  <div>
+                    <h3>{currentTimelineBlock.title}</h3>
+                    <p className="muted">{currentTimelineBlock.category.toUpperCase()} · {currentTimelineBlock.minutesLeft} min left</p>
+                  </div>
+                  <button type="button" onClick={() => { setEditingTimelineEvent(currentTimelineBlock); setShowTimelineSheet(true); }}>Edit</button>
+                </div>
+              ) : (
+                <div className="routine-now-card">
+                  <div>
+                    <h3>No activity scheduled</h3>
+                    <p className="muted">Add a block to anchor this hour.</p>
+                  </div>
+                  <button type="button" onClick={() => { setEditingTimelineEvent({ id: Date.now(), title: "", hour: currentHour, category: "work", durationMinutes: 60 }); setShowTimelineSheet(true); }}>+ Add</button>
+                </div>
+              )}
+            </section>
+
+            <section className="card routine-card">
+              <p className="routine-section-kicker">TODAY'S TIMELINE</p>
+              <div className="timeline-list">
+                {routineHours.map((hour) => {
+                  const event = sortedTimelineEvents.find((e) => e.hour === hour);
+                  const isNow = hour === currentHour;
+                  return (
+                    <button key={hour} type="button" className={`timeline-hour ${isNow ? "current" : ""}`} onClick={() => {
+                      setEditingTimelineEvent(event ?? { id: Date.now(), title: "", hour, category: "work", durationMinutes: 60 });
+                      setShowTimelineSheet(true);
+                    }}>
+                      <div className="timeline-hour-label">
+                        <span>{hour > 12 ? `${hour - 12}pm` : hour === 12 ? "12pm" : `${hour}am`}</span>
+                        {isNow && <span className="timeline-now">NOW</span>}
+                      </div>
+                      <div className="timeline-hour-events">
+                        {event ? (
+                          <div className={`timeline-event ${event.category}`}>
+                            <span>{event.title}</span>
+                            <small>{event.durationMinutes ?? 60}m</small>
+                          </div>
+                        ) : (
+                          <div className="timeline-empty">+ Add activity</div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="card routine-card">
+              <p className="routine-section-kicker">DAILY CHECKLIST</p>
               <div className="row">
-                <h3>Top priorities</h3>
-                <span className="badge">{tasks.filter((t) => t.done).length}/{tasks.length} done</span>
+                <h3>Today's tasks</h3>
+                <span className="badge">{doneTasks} of {tasks.length} done</span>
               </div>
-              <p className="muted">Focus on a few high-impact items for today.</p>
-              <div className="priority-add-row">
-                <input value={timelineTitle} onChange={(e) => setTimelineTitle(e.target.value)} placeholder="Add priority" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!timelineTitle.trim()) return;
-                    setTasks((prev) => [...prev, { id: Date.now(), title: timelineTitle.trim(), priority: "high", category: "work", done: false }]);
-                    setTimelineTitle("");
-                  }}
-                >
-                  Add
-                </button>
-              </div>
-              {tasks.length === 0 && <p className="muted routine-empty">No priorities yet. Add 1-3 tasks for today.</p>}
-              {tasks.map((task) => (
+              {todayChecklist.map((task) => (
                 <div key={task.id} className="routine-row">
                   <label className="routine-check-item">
                     <input type="checkbox" checked={task.done} onChange={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: !t.done } : t))} />
-                    <span>{task.title}</span>
+                    <span style={{ textDecoration: task.done ? "line-through" : "none" }}>{task.title}</span>
                   </label>
-                  <button type="button" className="ghost-btn" onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}>Delete</button>
+                  <span className="routine-check-pill">{task.priority}</span>
                 </div>
               ))}
             </section>
 
+            <section className="card routine-card">
+              <p className="routine-section-kicker">ROUTINE TEMPLATE</p>
+              <div className="row">
+                <h3>Ideal day blocks</h3>
+                <div className="inline-actions">
+                  <button type="button" onClick={applyTemplateToToday}>Apply Template to Today</button>
+                  <button type="button" className="ghost-btn" onClick={() => { setEditingTemplateBlock({ id: Date.now(), name: "", hour: 7, durationMinutes: 60, category: "personal" }); setShowTemplateSheet(true); }}>+ Add</button>
+                </div>
+              </div>
+              {routineTemplate.map((block) => (
+                <div key={block.id} className={`timeline-event ${block.category}`}>
+                  <span>{block.hour > 12 ? `${block.hour - 12}pm` : block.hour === 12 ? "12pm" : `${block.hour}am`} · {block.name} ({block.durationMinutes}m)</span>
+                  <div className="inline-actions">
+                    <button type="button" className="ghost-btn" onClick={() => { setEditingTemplateBlock(block); setShowTemplateSheet(true); }}>Edit</button>
+                    <button type="button" className="ghost-btn" onClick={() => setRoutineTemplate((prev) => prev.filter((x) => x.id !== block.id))}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </section>
 
-            <section className="card routine-card routine-card-equal routine-reminders-card">
+            <section className="card routine-card">
+              <p className="routine-section-kicker">PLAN AHEAD</p>
+              <div className="row">
+                <h3>Tomorrow & this week</h3>
+                <button type="button" className="ghost-btn" onClick={() => { setEditingPlanAheadItem({ date: tomorrowLabel, title: "", hour: 9, category: "work", createdAt: new Date().toISOString() }); setShowPlanAheadSheet(true); }}>+ Add</button>
+              </div>
+              <p className="muted">Tomorrow</p>
+              {tomorrowPlans.map((item) => (
+                <div key={item.id} className={`timeline-event ${item.category}`}>
+                  <span>{item.hour > 12 ? `${item.hour - 12}pm` : item.hour === 12 ? "12pm" : `${item.hour}am`} · {item.title}</span>
+                  <div className="inline-actions">
+                    <button type="button" className="ghost-btn" onClick={() => { setEditingPlanAheadItem(item); setShowPlanAheadSheet(true); }}>Edit</button>
+                    <button type="button" className="ghost-btn" onClick={() => { void deletePlanAheadItem(item.id); }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+              <p className="muted">Later this week</p>
+              {laterWeekPlans.map((item) => (
+                <div key={item.id} className={`timeline-event ${item.category}`}>
+                  <span>{format(new Date(item.date), "EEE")} · {item.hour > 12 ? `${item.hour - 12}pm` : item.hour === 12 ? "12pm" : `${item.hour}am`} · {item.title}</span>
+                </div>
+              ))}
+            </section>
+
+            <section className="card routine-card">
               <p className="routine-section-kicker">REMINDERS</p>
-              <div className="routine-reminder-group">
-                <article className="routine-reminder-item">
+              {routineReminders.map((item) => (
+                <article key={item.id} className="routine-reminder-item">
                   <div className="routine-reminder-left">
                     <span className="routine-reminder-icon">🔔</span>
                     <div>
-                      <h3>Routine reminder</h3>
-                      <p className="muted">Quick reminders for your day rhythm.</p>
+                      <h3>{item.label}</h3>
+                      <p className="muted">In {Math.max(1, Math.round(item.delaySeconds / 60))} min</p>
                     </div>
                   </div>
                   <label className="ios-switch">
-                    <input type="checkbox" checked={remindersEnabled} onChange={(e) => setRemindersEnabled(e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      checked={item.enabled}
+                      onChange={(e) => {
+                        const next = { ...item, enabled: e.target.checked };
+                        setRoutineReminders((prev) => prev.map((x) => x.id === item.id ? next : x));
+                        if (e.target.checked) void scheduleReminderItem(next);
+                      }}
+                    />
                     <span />
                   </label>
                 </article>
-                <article className="routine-reminder-item">
-                  <div className="routine-reminder-left">
-                    <span className="routine-reminder-icon coach">✨</span>
-                    <div>
-                      <h3>Coach Zero nudges</h3>
-                      <p className="muted">Push the latest AI message to your phone.</p>
-                    </div>
-                  </div>
-                  <label className="ios-switch">
-                    <input type="checkbox" checked={coachNudgesEnabled} onChange={(e) => setCoachNudgesEnabled(e.target.checked)} />
-                    <span />
-                  </label>
-                </article>
-                <article className="routine-reminder-item">
-                  <div className="routine-reminder-left">
-                    <span className="routine-reminder-icon time">⏰</span>
-                    <div>
-                      <h3>Schedule</h3>
-                      <p className="muted">Choose when this reminder should fire.</p>
-                    </div>
-                  </div>
-                  <span className="routine-chevron">›</span>
-                </article>
-              </div>
-              <div className="routine-reminder-form">
-                <input value={routineReminderTitle} onChange={(e) => setRoutineReminderTitle(e.target.value)} placeholder="Reminder title" />
-                <textarea value={routineReminderBody} onChange={(e) => setRoutineReminderBody(e.target.value)} rows={2} placeholder="Reminder message" />
-                <div className="routine-reminder-row">
-                  <select value={routineReminderDelaySec} onChange={(e) => setRoutineReminderDelaySec(e.target.value)}>
-                    <option value="900">In 15 minutes</option>
-                    <option value="1800">In 30 minutes</option>
-                    <option value="3600">In 1 hour</option>
-                    <option value="7200">In 2 hours</option>
-                    <option value="28800">Tonight (8 hours)</option>
-                  </select>
-                  <button type="button" onClick={() => { void scheduleRoutineReminder(); }}>Save and schedule</button>
-                </div>
-              </div>
-              <button type="button" className="ghost-btn" onClick={() => { void sendAiNotification(); }}>
-                Notify with Coach Zero
+              ))}
+              <button type="button" className="routine-add-reminder" onClick={() => { setEditingRoutineReminder({ id: Date.now(), label: "Routine reminder", delaySeconds: 1800, enabled: true }); setShowRoutineReminderSheet(true); }}>
+                + Add Reminder
               </button>
             </section>
-            <AnimatePresence>
-              {showReminderSheet && (
-                <motion.div className="routine-confirm-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  <motion.div className="routine-confirm-sheet" initial={{ y: 160 }} animate={{ y: 0 }} exit={{ y: 160 }}>
-                    <h4>Reminder Scheduled</h4>
-                    <p className="muted">{routineReminderTitle} will notify you in {Math.max(1, Math.round(Number(routineReminderDelaySec) / 60))} min.</p>
-                  </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         )}
 
@@ -1367,7 +1648,7 @@ function App() {
                 <label>Monthly savings reserve<input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
               </div>
               <div className="settings-formula">
-                <p className="muted">Weekly safe (from monthly real balance): {money(weeklySafeToUse)}</p>
+                <p className="muted">Weekly safe (from current balance): {money(weeklySafeToUse)}</p>
                 <p className="muted">
                   Monthly real balance: {money(realBalance)} - {money(budgetSnapshot.remainingMonthSubscriptions)}
                 </p>
@@ -1499,6 +1780,71 @@ function App() {
             }}
           />
         )}
+        {showTimelineSheet && editingTimelineEvent && (
+          <RoutineBlockSheet
+            title={editingTimelineEvent.title}
+            hour={editingTimelineEvent.hour}
+            durationMinutes={editingTimelineEvent.durationMinutes ?? 60}
+            category={editingTimelineEvent.category}
+            onClose={() => { setShowTimelineSheet(false); setEditingTimelineEvent(null); }}
+            onSave={({ title, hour, durationMinutes, category }) => {
+              setTimelineEvents((prev) => {
+                const exists = prev.some((e) => e.id === editingTimelineEvent.id);
+                const nextEvent: TimelineEvent = { ...editingTimelineEvent, title, hour, durationMinutes, category };
+                if (exists) return prev.map((e) => e.id === editingTimelineEvent.id ? nextEvent : e);
+                return [...prev, nextEvent];
+              });
+              setShowTimelineSheet(false);
+              setEditingTimelineEvent(null);
+            }}
+          />
+        )}
+        {showTemplateSheet && editingTemplateBlock && (
+          <RoutineBlockSheet
+            title={editingTemplateBlock.name}
+            hour={editingTemplateBlock.hour}
+            durationMinutes={editingTemplateBlock.durationMinutes}
+            category={editingTemplateBlock.category}
+            onClose={() => { setShowTemplateSheet(false); setEditingTemplateBlock(null); }}
+            onSave={({ title, hour, durationMinutes, category }) => {
+              setRoutineTemplate((prev) => {
+                const exists = prev.some((e) => e.id === editingTemplateBlock.id);
+                const block: RoutineTemplateBlock = { ...editingTemplateBlock, name: title, hour, durationMinutes, category };
+                if (exists) return prev.map((e) => e.id === editingTemplateBlock.id ? block : e);
+                return [...prev, block];
+              });
+              setShowTemplateSheet(false);
+              setEditingTemplateBlock(null);
+            }}
+          />
+        )}
+        {showPlanAheadSheet && editingPlanAheadItem && (
+          <PlanAheadSheet
+            item={editingPlanAheadItem}
+            onClose={() => { setShowPlanAheadSheet(false); setEditingPlanAheadItem(null); }}
+            onSave={(item) => {
+              void savePlanAheadItem(item);
+              setShowPlanAheadSheet(false);
+              setEditingPlanAheadItem(null);
+            }}
+          />
+        )}
+        {showRoutineReminderSheet && editingRoutineReminder && (
+          <ReminderSheet
+            item={editingRoutineReminder}
+            onClose={() => { setShowRoutineReminderSheet(false); setEditingRoutineReminder(null); }}
+            onSave={(item) => {
+              setRoutineReminders((prev) => {
+                const exists = prev.some((x) => x.id === item.id);
+                if (exists) return prev.map((x) => x.id === item.id ? item : x);
+                return [...prev, item];
+              });
+              void scheduleReminderItem(item);
+              setShowRoutineReminderSheet(false);
+              setEditingRoutineReminder(null);
+            }}
+          />
+        )}
         {showCalendarDaySheet && (
           <CalendarDaySheet
             day={selectedCalendarDay}
@@ -1565,6 +1911,7 @@ function App() {
                   </div>
                   <div className="suggestion-list">
                     {coachSuggestions.map((tip) => <p key={tip} className="muted">- {tip}</p>)}
+                    <p className="muted">- {smartSavingsTip}</p>
                   </div>
                 </div>
               </div>
@@ -1691,6 +2038,187 @@ function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function RoutineBlockSheet({
+  title: initialTitle,
+  hour: initialHour,
+  durationMinutes: initialDuration,
+  category: initialCategory,
+  onClose,
+  onSave,
+}: {
+  title: string;
+  hour: number;
+  durationMinutes: number;
+  category: TimelineCategory;
+  onClose: () => void;
+  onSave: (payload: { title: string; hour: number; durationMinutes: number; category: TimelineCategory }) => void;
+}) {
+  const [title, setTitle] = useState(initialTitle);
+  const [startTime, setStartTime] = useState(`${String(Math.max(0, Math.min(23, initialHour))).padStart(2, "0")}:00`);
+  const [endTime, setEndTime] = useState(() => {
+    const start = Math.max(0, Math.min(23, initialHour));
+    const endHourRaw = start + Math.max(1, Math.round(initialDuration / 60));
+    const endHour = Math.max(0, Math.min(23, endHourRaw));
+    return `${String(endHour).padStart(2, "0")}:00`;
+  });
+  const [category, setCategory] = useState<TimelineCategory>(initialCategory);
+  const [keepAdding, setKeepAdding] = useState(false);
+  const hourNum = Math.max(0, Math.min(23, Number(startTime.split(":")[0]) || 0));
+  const endHour = Math.max(0, Math.min(23, Number(endTime.split(":")[0]) || hourNum + 1));
+  const durationNum = Math.max(15, (endHour - hourNum) * 60);
+  const quickTemplates = [
+    { label: "Wake up", hour: 6, duration: 30, category: "personal" as const },
+    { label: "Workout", hour: 7, duration: 45, category: "health" as const },
+    { label: "Deep work", hour: 9, duration: 120, category: "work" as const },
+    { label: "Lunch", hour: 13, duration: 45, category: "personal" as const },
+    { label: "Wind down", hour: 21, duration: 45, category: "health" as const },
+  ];
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => {
+        e.preventDefault();
+        if (!title.trim()) return;
+        const payload = {
+          title: title.trim(),
+          hour: hourNum,
+          durationMinutes: durationNum,
+          category,
+        };
+        onSave(payload);
+        if (keepAdding) {
+          setTitle("");
+          const nextEnd = Math.min(23, hourNum + 1);
+          setEndTime(`${String(nextEnd).padStart(2, "0")}:00`);
+        }
+      }}>
+        <h3>Routine block</h3>
+        <div className="routine-block-quicklist">
+          {quickTemplates.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setTitle(preset.label);
+                setStartTime(`${String(preset.hour).padStart(2, "0")}:00`);
+                const endPresetHour = Math.min(23, preset.hour + Math.max(1, Math.round(preset.duration / 60)));
+                setEndTime(`${String(endPresetHour).padStart(2, "0")}:00`);
+                setCategory(preset.category);
+              }}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <label>Activity<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Deep work, gym, walk..." required /></label>
+        <div className="routine-inline-form">
+          <label>
+            Start hour
+            <input type="time" step={3600} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          </label>
+          <label>
+            End time
+            <input type="time" step={3600} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </label>
+        </div>
+        <p className="muted">Duration: {Math.floor(durationNum / 60)}h {durationNum % 60}m</p>
+        <div className="task-filter-row">
+          {(["work", "health", "personal"] as const).map((opt) => (
+            <button key={opt} type="button" className={category === opt ? "active" : ""} onClick={() => setCategory(opt)}>
+              {opt}
+            </button>
+          ))}
+        </div>
+        <label className="routine-check-item">
+          <input type="checkbox" checked={keepAdding} onChange={(e) => setKeepAdding(e.target.checked)} />
+          <span>Save and keep adding blocks</span>
+        </label>
+        <div className="row">
+          <button type="button" className="ghost-btn" onClick={onClose}>Cancel</button>
+          <button type="submit">Save block</button>
+        </div>
+      </motion.form>
+    </motion.div>
+  );
+}
+
+function PlanAheadSheet({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: PlanAheadItem;
+  onClose: () => void;
+  onSave: (item: PlanAheadItem) => void;
+}) {
+  const [title, setTitle] = useState(item.title);
+  const [date, setDate] = useState(item.date);
+  const [hour, setHour] = useState(String(item.hour));
+  const [category, setCategory] = useState<TimelineCategory>(item.category);
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => {
+        e.preventDefault();
+        if (!title.trim() || !date) return;
+        onSave({
+          ...item,
+          title: title.trim(),
+          date,
+          hour: Math.max(0, Math.min(23, Number(hour) || 0)),
+          category,
+          createdAt: item.createdAt || new Date().toISOString(),
+        });
+      }}>
+        <h3>Plan ahead item</h3>
+        <label>Activity<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
+        <label>Day<input type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></label>
+        <div className="routine-inline-form">
+          <input type="number" min={0} max={23} value={hour} onChange={(e) => setHour(e.target.value)} placeholder="Hour" />
+          <select value={category} onChange={(e) => setCategory(e.target.value as TimelineCategory)}>
+            <option value="work">Work</option>
+            <option value="health">Health</option>
+            <option value="personal">Personal</option>
+          </select>
+          <button type="submit">Save</button>
+        </div>
+        <button type="button" className="ghost-btn" onClick={onClose}>Cancel</button>
+      </motion.form>
+    </motion.div>
+  );
+}
+
+function ReminderSheet({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: RoutineReminderItem;
+  onClose: () => void;
+  onSave: (item: RoutineReminderItem) => void;
+}) {
+  const [label, setLabel] = useState(item.label);
+  const [delaySeconds, setDelaySeconds] = useState(String(item.delaySeconds));
+  const [enabled, setEnabled] = useState(item.enabled);
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => {
+        e.preventDefault();
+        if (!label.trim()) return;
+        onSave({ ...item, label: label.trim(), delaySeconds: Math.max(60, Number(delaySeconds) || 1800), enabled });
+      }}>
+        <h3>Reminder</h3>
+        <label>Label<input value={label} onChange={(e) => setLabel(e.target.value)} required /></label>
+        <label>Delay (seconds)<input type="number" min={60} value={delaySeconds} onChange={(e) => setDelaySeconds(e.target.value)} /></label>
+        <label className="routine-check-item">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <span>Active</span>
+        </label>
+        <div className="row"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>
+      </motion.form>
+    </motion.div>
   );
 }
 
