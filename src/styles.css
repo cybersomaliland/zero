@@ -962,6 +962,88 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .briefing-grid span.muted {
   font-size: 11px;
 }
+.live-briefing-grid {
+  display: grid;
+  gap: 8px;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+.live-card {
+  border-radius: 16px;
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+.live-label {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+.live-card h3 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.15;
+}
+.live-task-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.priority-dot.high { background: #ff453a; }
+.priority-dot.medium { background: #ff9f0a; }
+.priority-dot.low { background: #30d158; }
+.inline-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+}
+.live-money-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.live-money-status.track { color: var(--success); }
+.live-money-status.over { color: var(--danger); }
+.savings-pulse-row,
+.bill-alert-row {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+.pulse-toggle {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  color: transparent;
+}
+.pulse-toggle.done {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
 .news-live-dot {
   border: 0;
   border-radius: 999px;
@@ -1016,12 +1098,12 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   font-size: 12px;
 }
 .recent-transactions-card {
-  border-radius: 22px;
-  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
-  border: 1px solid #e2ebff;
-  box-shadow: 0 14px 28px #0f172818;
+  border-radius: 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 .recent-tx-head {
   display: flex;
@@ -1030,15 +1112,12 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   gap: 10px;
 }
 .recent-tx-head h3 {
-  margin: 2px 0 0;
+  margin: 0;
 }
 .recent-tx-count {
-  border-radius: 999px;
-  padding: 6px 10px;
+  margin: 2px 0 0;
   font-size: 12px;
-  font-weight: 700;
-  color: #0a84ff;
-  background: #e9f2ff;
+  color: var(--text-secondary);
 }
 .recent-tx-stats {
   display: grid;
@@ -1046,17 +1125,17 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   gap: 8px;
 }
 .recent-tx-stats article {
-  border-radius: 12px;
-  border: 1px solid #e7eefb;
-  background: #f7f9fe;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
   padding: 10px;
   display: grid;
   gap: 2px;
 }
 .recent-tx-list {
-  border-radius: 14px;
-  border: 1px solid #e7eefb;
-  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
   padding: 0 10px;
 }
 .recent-tx-list .tx-row:last-child {
@@ -1073,9 +1152,6 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 }
 .recent-tx-empty p {
   margin: 0;
-}
-.recent-tx-empty button {
-  width: fit-content;
 }
 .calendar-weekdays {
   display: grid;
@@ -1522,29 +1598,15 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .plan-fill { height: 100%; background: linear-gradient(90deg, #0a84ff, #4ba4ff); border-radius: 999px; transition: width .25s ease; }
 .plan-fill.warn { background: linear-gradient(90deg, #ffb547, #ff8d5c); }
 .daily-goal-card {
-  background: linear-gradient(180deg, #ffffff 0%, #f7f9fd 100%);
-}
-.daily-allowance-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
   gap: 10px;
-}
-.daily-allowance-head h3 {
-  margin: 2px 0 0;
-  font-size: 29px;
-  letter-spacing: -0.02em;
-}
-.goal-pill {
-  font-size: 12px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  color: #0a84ff;
-  background: #e8f2ff;
+  padding: 0;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 .daily-progress-track {
-  margin-top: 10px;
-  height: 10px;
+  margin-top: 4px;
+  height: 8px;
   border-radius: 999px;
   background: #e9eef6;
   overflow: hidden;
@@ -1552,29 +1614,66 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .daily-progress-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #0a84ff, #53a2ff);
+  background: linear-gradient(90deg, #30d158, #5ad879);
   transition: width .25s ease;
 }
-.daily-allowance-grid {
+.daily-progress-fill.warn {
+  background: linear-gradient(90deg, #ffd60a, #ff9f0a);
+}
+.daily-progress-fill.danger {
+  background: linear-gradient(90deg, #ff9f0a, #ff453a);
+}
+.daily-allowance-main,
+.daily-allowance-status,
+.daily-allowance-plan,
+.daily-allowance-bills {
+  border-radius: 18px;
+  padding: 14px;
+  box-shadow: 0 8px 20px #00000012;
+}
+.daily-allowance-main {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
+  gap: 10px;
+  text-align: center;
 }
-.daily-allowance-grid article {
-  background: #f5f7fa;
-  border-radius: 16px;
-  padding: 12px;
+.daily-allowance-main h3 {
+  margin: 0;
+  font-size: 48px;
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
-.daily-tip {
-  margin-top: 10px;
-  background: #eef5ff;
-  border: 1px solid #d8e7ff;
-  border-radius: 14px;
-  padding: 10px 12px;
+.daily-allowance-status p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.daily-allowance-collapse {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  gap: 10px;
   font-size: 13px;
-  line-height: 1.35;
-  color: #2f3d58;
+  cursor: pointer;
+}
+.daily-allowance-plan-details,
+.daily-allowance-bills-details {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.daily-allowance-plan-details p,
+.daily-allowance-bills-details p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.daily-allowance-bills .daily-allowance-collapse span:first-child {
+  font-weight: 600;
 }
 .tabbar {
   position: fixed;

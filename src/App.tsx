@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth } from "date-fns";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
@@ -64,6 +64,9 @@ function App() {
   const [showBulkTx, setShowBulkTx] = useState(false);
   const [showWeeklySafe, setShowWeeklySafe] = useState(false);
   const [showMonthlyBalance, setShowMonthlyBalance] = useState(false);
+  const [showAllowancePlanDetails, setShowAllowancePlanDetails] = useState(false);
+  const [showAllowanceBillsDetails, setShowAllowanceBillsDetails] = useState(false);
+  const [savingPulseDone, setSavingPulseDone] = useState(false);
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
@@ -109,6 +112,7 @@ function App() {
   const [routineHydrated, setRoutineHydrated] = useState(false);
   const [, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
   const [currentHour, setCurrentHour] = useState(new Date().getHours());
+  const [liveNow, setLiveNow] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
@@ -155,6 +159,14 @@ function App() {
     }, 4500);
     return () => window.clearInterval(id);
   }, [newsItems]);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = new Date();
+      setCurrentHour(now.getHours());
+      setLiveNow(now);
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
   useEffect(() => {
     try {
       const raw = localStorage.getItem("zero_routine_v1");
@@ -533,14 +545,11 @@ function App() {
     const minuteOfDay = now.getHours() * 60 + now.getMinutes();
     return sortedTimelineEvents.find((event) => event.hour * 60 > minuteOfDay) ?? null;
   }, [sortedTimelineEvents, currentHour]);
-  const routinePlanHint = useMemo(() => {
-    if (routineTemplate.length === 0) return "Template not set";
-    if (nextTimelineBlock) {
-      const h = nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`;
-      return `Next: ${h} ${nextTimelineBlock.title}`;
-    }
-    return "No more blocks today";
-  }, [routineTemplate.length, nextTimelineBlock]);
+  const nextTimelineBlockEtaMinutes = useMemo(() => {
+    if (!nextTimelineBlock) return 0;
+    const nowMinute = liveNow.getHours() * 60 + liveNow.getMinutes();
+    return Math.max(0, nextTimelineBlock.hour * 60 - nowMinute);
+  }, [nextTimelineBlock, liveNow]);
   const routineHours = useMemo(() => Array.from({ length: 18 }, (_, i) => i + 6), []);
   const taskPriorityWeight: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
   const todayChecklist = useMemo(
@@ -564,11 +573,6 @@ function App() {
     return { planned, completed, totalCalories, completion };
   }, [meals]);
   const doneTasks = useMemo(() => tasks.filter((t) => t.done).length, [tasks]);
-  const overallScore = useMemo(() => {
-    const taskPct = tasks.length ? doneTasks / tasks.length : 0;
-    const mealPct = mealStats.completion / 100;
-    return Math.round(((taskPct + mealPct) / 2) * 100);
-  }, [tasks, doneTasks, mealStats.completion]);
   const dailyBriefing = useMemo(() => {
     const openTasks = Math.max(0, tasks.length - doneTasks);
     const moneySignal = todayRemaining >= 0 ? "on track" : "over target";
@@ -635,6 +639,23 @@ function App() {
     const foodBudget = Math.max(2, (Math.max(0, todayRemaining) + inThreeDays) * 0.35);
     return { savePerDay, inThreeDays, foodBudget };
   }, [safePerDay, todayRemaining]);
+  const dailyAllowanceStatusText = useMemo(() => {
+    if (todaySpent <= 0) return "Nothing spent yet today. Your full allowance is available.";
+    if (todayRemaining < 0) return `You've gone ${money(Math.abs(todayRemaining))} over today. Keep tomorrow lighter.`;
+    return `You're on track. ${money(todayRemaining)} left for today.`;
+  }, [todaySpent, todayRemaining]);
+  const weeklyDueBills = useMemo(
+    () => upcoming.filter((bill) => {
+      const daysAway = differenceInCalendarDays(parseISO(bill.dueDate), startOfDay(new Date()));
+      return daysAway >= 0 && daysAway <= 7;
+    }),
+    [upcoming],
+  );
+  const allowanceProgressTone = useMemo(() => {
+    if (todayRemaining < 0 || allowanceProgressPct >= 90) return "danger";
+    if (allowanceProgressPct >= 60) return "warn";
+    return "safe";
+  }, [allowanceProgressPct, todayRemaining]);
   const recentTransactions = useMemo(() => transactions.slice(0, 5), [transactions]);
   const recentTransactionSummary = useMemo(() => {
     const expense = recentTransactions.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
@@ -645,6 +666,140 @@ function App() {
       income,
     };
   }, [recentTransactions]);
+  const openTasksSorted = useMemo(
+    () => tasks.filter((t) => !t.done).sort((a, b) => taskPriorityWeight[a.priority] - taskPriorityWeight[b.priority]),
+    [tasks],
+  );
+  const topOpenTasks = useMemo(() => openTasksSorted.slice(0, 2), [openTasksSorted]);
+  const next48HourBill = useMemo(
+    () => upcoming
+      .map((bill) => {
+        const dueMs = +new Date(bill.dueDate);
+        const diffHours = Math.round((dueMs - +liveNow) / (60 * 60 * 1000));
+        return { ...bill, dueMs, diffHours };
+      })
+      .filter((bill) => bill.diffHours <= 48)
+      .sort((a, b) => a.dueMs - b.dueMs)[0] ?? null,
+    [upcoming, liveNow],
+  );
+  const liveCards = useMemo(() => {
+    const cards: Array<{ priority: number; node: ReactNode }> = [];
+
+    cards.push({
+      priority: 2,
+      node: (
+        <article className="card live-card" key="now">
+          <p className="live-label">NOW</p>
+          {currentTimelineBlock ? (
+            <>
+              <h3>{currentTimelineBlock.title}</h3>
+              <p className="muted">{currentTimelineBlock.category.toUpperCase()} · ends in {currentTimelineBlock.minutesLeft} min</p>
+            </>
+          ) : (
+            <p className="muted">Nothing scheduled <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
+          )}
+        </article>
+      ),
+    });
+
+    cards.push({
+      priority: 3,
+      node: (
+        <article className="card live-card" key="next">
+          <p className="live-label">NEXT</p>
+          {nextTimelineBlock ? (
+            <>
+              <h3>{nextTimelineBlock.title}</h3>
+              <p className="muted">
+                {nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`} · in {nextTimelineBlockEtaMinutes} min
+              </p>
+            </>
+          ) : (
+            <p className="muted">Free for the rest of the day</p>
+          )}
+        </article>
+      ),
+    });
+
+    cards.push({
+      priority: 4,
+      node: (
+        <article className="card live-card" key="tasks">
+          <p className="live-label">TASKS</p>
+          {topOpenTasks.length > 0 ? (
+            <>
+              {topOpenTasks.map((task) => (
+                <p key={task.id} className="live-task-line">
+                  <span>{task.title}</span>
+                  <span className={`priority-dot ${task.priority}`} />
+                </p>
+              ))}
+              {openTasksSorted.length > 2 && <p className="muted">{openTasksSorted.length - 2} more tasks</p>}
+            </>
+          ) : (
+            <p className="muted">Nothing on your list <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
+          )}
+        </article>
+      ),
+    });
+
+    cards.push({
+      priority: todayRemaining < 0 ? 1 : 5,
+      node: (
+        <article className="card live-card live-money-card" key="money">
+          <p className="live-label">MONEY</p>
+          <h3>{money(todayRemaining)} left today</h3>
+          <p className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</p>
+        </article>
+      ),
+    });
+
+    if (savePlan.savePerDay > 0) {
+      cards.push({
+        priority: 6,
+        node: (
+          <article className="card live-card" key="savings">
+            <p className="live-label">SAVINGS PULSE</p>
+            <button type="button" className="savings-pulse-row" onClick={() => setSavingPulseDone((v) => !v)}>
+              <span>Save {money(savePlan.savePerDay)} today</span>
+              <span className={`pulse-toggle ${savingPulseDone ? "done" : ""}`}>{savingPulseDone ? "✓" : ""}</span>
+            </button>
+          </article>
+        ),
+      });
+    }
+
+    if (next48HourBill) {
+      const warningLabel = next48HourBill.diffHours < 0
+        ? "overdue"
+        : next48HourBill.diffHours <= 24
+          ? "due tomorrow"
+          : "due soon";
+      cards.push({
+        priority: next48HourBill.diffHours < 0 ? 0 : 2,
+        node: (
+          <article className="card live-card" key="bills">
+            <p className="live-label">BILLS</p>
+            <button type="button" className="bill-alert-row" onClick={() => setTab("Subscriptions")}>
+              <span>⚠ {next48HourBill.name} {warningLabel}</span>
+            </button>
+          </article>
+        ),
+      });
+    }
+
+    return cards.sort((a, b) => a.priority - b.priority).map((entry) => entry.node);
+  }, [
+    currentTimelineBlock,
+    nextTimelineBlock,
+    nextTimelineBlockEtaMinutes,
+    topOpenTasks,
+    openTasksSorted.length,
+    todayRemaining,
+    savePlan.savePerDay,
+    savingPulseDone,
+    next48HourBill,
+  ]);
   const morningCoachBriefing = useMemo(() => {
     const preferredName = settings?.profileName?.trim() || "Guled Abdi";
     const greeting = currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : "Good evening";
@@ -1349,52 +1504,8 @@ function App() {
                 </button>
               )}
             </section>
-            <section className="home-intro briefing-card">
-              <div className="briefing-head">
-                <div>
-                  <p className="home-kicker">Daily briefing</p>
-                  <h2 className="home-title">Today at a glance</h2>
-                </div>
-                <span className="briefing-score">{overallScore}% focus</span>
-              </div>
-              <p className="briefing-summary">
-                {dailyBriefing.openTasks > 0
-                  ? `${dailyBriefing.openTasks} task(s) still open. Lock your top one now and protect your spending pace.`
-                  : "Tasks are clear. Keep your money pace steady and finish the day strong."}
-              </p>
-              <div className="briefing-grid">
-                <article className="briefing-item money">
-                  <p className="muted">Money pace</p>
-                  <strong className={todayRemaining < 0 ? "negative" : "positive"}>
-                    {todayRemaining < 0 ? `${money(Math.abs(todayRemaining))} over` : `${money(todayRemaining)} left`}
-                  </strong>
-                  <span className="muted">{dailyBriefing.moneySignal}</span>
-                </article>
-                <article className="briefing-item">
-                  <p className="muted">Tasks</p>
-                  <strong>{dailyBriefing.taskSignal}</strong>
-                  <span className="muted">{tasks.length > 0 ? `${dailyBriefing.openTasks} open` : "Add your first priority"}</span>
-                </article>
-                <article className="briefing-item">
-                  <p className="muted">Savings</p>
-                  <strong>{money(savePlan.savePerDay)}</strong>
-                  <span className="muted">daily save target</span>
-                </article>
-                <article className="briefing-item">
-                  <p className="muted">Current block</p>
-                  <strong>{currentTimelineBlock?.title ?? "No activity scheduled"}</strong>
-                  <span className="muted">
-                    {currentTimelineBlock
-                      ? `${currentTimelineBlock.hour > 12 ? currentTimelineBlock.hour - 12 : currentTimelineBlock.hour}${currentTimelineBlock.hour >= 12 ? "pm" : "am"} • ${currentTimelineBlock.category}`
-                      : "Add a block to anchor this hour"}
-                  </span>
-                </article>
-                <article className="briefing-item routine">
-                  <p className="muted">Routine plan</p>
-                  <strong>{routineTemplate.length > 0 ? `${routineTemplate.length} template blocks` : "Set up your template"}</strong>
-                  <span className="muted">{routinePlanHint}</span>
-                </article>
-              </div>
+            <section className="home-intro live-briefing-grid">
+              {liveCards}
             </section>
 
             <div className="home-section-head">
@@ -1488,30 +1599,51 @@ function App() {
             </motion.section>
 
             <div className="home-section-head">
-              <h3>Weekly progress</h3>
-              <p className="muted">Soft guidance, no strict warnings</p>
+              <h3>Daily allowance</h3>
+              <p className="muted">Simple, focused, actionable</p>
             </div>
             <section className="card daily-goal-card">
-              <div className="daily-allowance-head">
-                <div>
-                  <p className="muted">Daily allowance goal</p>
-                  <h3>{money(safePerDay)}</h3>
+              <article className="card daily-allowance-main">
+                <p className="muted">Money left today</p>
+                <h3>{money(Math.max(0, todayRemaining))}</h3>
+                <p className="muted">of {money(safePerDay)} daily allowance</p>
+                <div className="daily-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={allowanceProgressPct}>
+                  <div className={`daily-progress-fill ${allowanceProgressTone}`} style={{ width: `${allowanceProgressPct}%` }} />
                 </div>
-                <span className="goal-pill">{allowanceProgressPct.toFixed(0)}% used</span>
-              </div>
-              <p className="muted">Based on your monthly real balance spread across remaining month days.</p>
-              <div className="daily-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={allowanceProgressPct}>
-                <div className="daily-progress-fill" style={{ width: `${allowanceProgressPct}%` }} />
-              </div>
-              <div className="daily-allowance-grid">
-                <article><p className="muted">Spent today</p><strong>{money(todaySpent)}</strong></article>
-                <article><p className="muted">Left for today</p><strong className={todayRemaining < 0 ? "negative" : "positive"}>{money(todayRemaining)}</strong></article>
-                <article><p className="muted">Save daily (3-day plan)</p><strong>{money(savePlan.savePerDay)}</strong></article>
-                <article><p className="muted">Extra buffer in 3 days</p><strong className="positive">{money(savePlan.inThreeDays)}</strong></article>
-                <article><p className="muted">Food budget after 3 days</p><strong>{money(savePlan.foodBudget)}</strong></article>
-                <article><p className="muted">Bills due this week</p><strong>{money(weeklyUpcomingSubs)}</strong></article>
-              </div>
-              <p className="daily-tip">{smartSavingsTip}</p>
+              </article>
+              <article className="card daily-allowance-status">
+                <p>{dailyAllowanceStatusText}</p>
+              </article>
+              <article className="card daily-allowance-plan">
+                <button type="button" className="daily-allowance-collapse" onClick={() => setShowAllowancePlanDetails((v) => !v)}>
+                  <span className="muted">Save {money(savePlan.savePerDay)}/day {"->"} {money(savePlan.inThreeDays)} buffer in 3 days</span>
+                  <span className="muted">{showAllowancePlanDetails ? "Hide" : "Expand"}</span>
+                </button>
+                {showAllowancePlanDetails && (
+                  <div className="daily-allowance-plan-details">
+                    <p className="muted">Day 1-3 save target: {money(savePlan.savePerDay)} each day.</p>
+                    <p className="muted">Total extra buffer after 3 days: {money(savePlan.inThreeDays)}.</p>
+                    <p className="muted">{smartSavingsTip}</p>
+                  </div>
+                )}
+              </article>
+              {weeklyUpcomingSubs > 0 && weeklyDueBills.length > 0 && (
+                <article className="card daily-allowance-bills">
+                  <button type="button" className="daily-allowance-collapse" onClick={() => setShowAllowanceBillsDetails((v) => !v)}>
+                    <span>⚠ {money(weeklyUpcomingSubs)} due this week</span>
+                    <span className="muted">{showAllowanceBillsDetails ? "Hide bills" : "Tap to see which bills"}</span>
+                  </button>
+                  {showAllowanceBillsDetails && (
+                    <div className="daily-allowance-bills-details">
+                      {weeklyDueBills.map((bill) => (
+                        <p key={bill.id}>
+                          {bill.name} - {money(bill.amount)} ({format(parseISO(bill.dueDate), "EEE d MMM")})
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              )}
             </section>
 
             <div className="home-section-head">
@@ -1521,10 +1653,10 @@ function App() {
             <section className="card recent-transactions-card">
               <div className="recent-tx-head">
                 <div>
-                  <p className="home-kicker">Recent transactions</p>
-                  <h3>Latest money moves</h3>
+                  <h3>Recent transactions</h3>
+                  <p className="muted">Latest money moves</p>
                 </div>
-                <span className="recent-tx-count">{recentTransactionSummary.count} items</span>
+                <p className="recent-tx-count">{recentTransactionSummary.count} items</p>
               </div>
               <div className="recent-tx-stats">
                 <article>
@@ -1545,7 +1677,6 @@ function App() {
                   <div className="recent-tx-empty">
                     <strong>No transactions yet</strong>
                     <p className="muted">Add your first entry to start tracking your real daily pace.</p>
-                    <button type="button" onClick={() => setShowTx(true)}>Add your first transaction</button>
                   </div>
                 )}
               </div>
