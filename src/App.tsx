@@ -299,6 +299,7 @@ function App() {
     return computeBudgetSnapshot(transactions, subscriptions, settings);
   }, [transactions, subscriptions, settings]);
   const realBalance = budgetSnapshot.currentBalance;
+  const monthlySalary = settings?.monthlySalary ?? 0;
   const monthlyRealBalance = budgetSnapshot.monthlyRealBalance;
   const weeklySafeToUse = budgetSnapshot.weeklySafeToUse;
   const safePerDay = budgetSnapshot.dailyAllowance;
@@ -1365,7 +1366,10 @@ function App() {
               </div>
               <div className="settings-formula">
                 <p className="muted">Weekly safe (from monthly real balance): {money(weeklySafeToUse)}</p>
-                <p className="muted">Monthly balance: {money(realBalance)} + {money(monthlyTransactionsNet)} - {money(monthlyUpcomingSubs)} - {money(monthlySavingsReserve)}</p>
+                <p className="muted">
+                  Monthly real balance: {money(realBalance)} + {money(budgetSnapshot.plannedIncomeRemaining)} - {money(budgetSnapshot.remainingMonthSubscriptions)} - {money(settings.reservedSavings)}
+                </p>
+                <p className="muted">Income this month: {money(budgetSnapshot.monthIncomeToDate)} of {money(monthlySalary)} planned.</p>
               </div>
             </section>
 
