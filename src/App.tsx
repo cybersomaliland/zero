@@ -23,10 +23,19 @@ const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
 ];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
+type ThemePreference = "system" | "light" | "dark";
 type TimelineEvent = { id: number; title: string; hour: number; category: TimelineCategory; durationMinutes?: number };
 type RoutineTemplateBlock = { id: number; name: string; hour: number; durationMinutes: number; category: TimelineCategory };
 type PlanAheadItem = { id?: number; date: string; title: string; hour: number; category: TimelineCategory; createdAt: string };
-type RoutineReminderItem = { id: number; label: string; delaySeconds: number; enabled: boolean };
+type RoutineReminderItem = {
+  id: number;
+  label: string;
+  message: string;
+  mode: "in" | "clock";
+  delaySeconds: number;
+  clockTime?: string;
+  enabled: boolean;
+};
 type RoutineDaySnapshot = {
   timelineEvents: TimelineEvent[];
   tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
@@ -124,6 +133,15 @@ function App() {
   const [timerNow, setTimerNow] = useState<number>(Date.now());
   const scheduledNotifTimeoutRef = useRef<number | null>(null);
   const routineNotificationCacheRef = useRef<Record<string, 1>>({});
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      const saved = localStorage.getItem("zero_theme_preference_v1");
+      if (saved === "light" || saved === "dark" || saved === "system") return saved;
+    } catch {
+      // ignore local storage issues
+    }
+    return "system";
+  });
 
   useEffect(() => {
     void init();
@@ -270,6 +288,21 @@ function App() {
   useEffect(() => {
     localStorage.setItem("zero_routine_reminders_v1", JSON.stringify(routineReminders));
   }, [routineReminders]);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolved = themePreference === "system"
+        ? (media.matches ? "dark" : "light")
+        : themePreference;
+      document.documentElement.setAttribute("data-theme", resolved);
+    };
+    applyTheme();
+    localStorage.setItem("zero_theme_preference_v1", themePreference);
+    if (themePreference !== "system") return;
+    const onChange = () => applyTheme();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [themePreference]);
   useEffect(() => {
     void db.table("routinePlans").toArray().then((rows) => {
       setPlanAheadItems(rows as PlanAheadItem[]);
@@ -527,7 +560,7 @@ function App() {
     const openTasks = Math.max(0, tasks.length - doneTasks);
     const moneySignal = todayRemaining >= 0 ? "on track" : "over target";
     const mealSignal = mealStats.planned > 0 ? `${mealStats.completed}/${mealStats.planned} meals done` : "no meals planned yet";
-    const taskSignal = tasks.length > 0 ? `${doneTasks}/${tasks.length} tasks done` : "no tasks planned yet";
+    const taskSignal = tasks.length > 0 ? `${doneTasks}/${tasks.length} tasks done` : "No tasks set yet";
     return {
       openTasks,
       moneySignal,
@@ -819,15 +852,28 @@ function App() {
   };
   const scheduleReminderItem = async (item: RoutineReminderItem) => {
     if (!item.enabled) return;
+    const now = new Date();
+    let delaySeconds = Math.max(60, item.delaySeconds || 1800);
+    if (item.mode === "clock" && item.clockTime) {
+      const [hRaw, mRaw] = item.clockTime.split(":");
+      const h = Math.max(0, Math.min(23, Number(hRaw) || 0));
+      const m = Math.max(0, Math.min(59, Number(mRaw) || 0));
+      const next = new Date(now);
+      next.setHours(h, m, 0, 0);
+      if (next.getTime() <= now.getTime()) {
+        next.setDate(next.getDate() + 1);
+      }
+      delaySeconds = Math.max(60, Math.round((next.getTime() - now.getTime()) / 1000));
+    }
     try {
       await fetch("/api/schedule-notification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: item.label,
-          body: `Routine reminder: ${item.label}`,
+          body: item.message?.trim() || `Routine reminder: ${item.label}`,
           displayName: settings?.profileName || "there",
-          delaySeconds: item.delaySeconds,
+          delaySeconds,
         }),
       });
     } catch {
@@ -1304,7 +1350,7 @@ function App() {
                 <article className="briefing-item">
                   <p className="muted">Tasks</p>
                   <strong>{dailyBriefing.taskSignal}</strong>
-                  <span className="muted">{dailyBriefing.openTasks} open</span>
+                  <span className="muted">{tasks.length > 0 ? `${dailyBriefing.openTasks} open` : "Add your first priority"}</span>
                 </article>
                 <article className="briefing-item">
                   <p className="muted">Savings</p>
@@ -1314,7 +1360,7 @@ function App() {
                 <article className="briefing-item">
                   <p className="muted">Bills (3d)</p>
                   <strong>{dailyBriefing.nextBills}</strong>
-                  <span className="muted">upcoming reminders</span>
+                  <span className="muted">{dailyBriefing.nextBills > 0 ? "due soon" : "nothing due"}</span>
                 </article>
               </div>
             </section>
@@ -1504,8 +1550,8 @@ function App() {
               ) : (
                 <div className="routine-now-card">
                   <div>
-                    <h3>No activity scheduled</h3>
-                    <p className="muted">Add a block to anchor this hour.</p>
+                    <h3>Nothing scheduled right now</h3>
+                    <p className="muted">Drop in one focus block so this hour has a clear target.</p>
                   </div>
                   <button type="button" onClick={() => { setEditingTimelineEvent({ id: Date.now(), title: "", hour: currentHour, category: "work", durationMinutes: 60 }); setShowTimelineSheet(true); }}>+ Add</button>
                 </div>
@@ -1612,7 +1658,12 @@ function App() {
                     <span className="routine-reminder-icon">🔔</span>
                     <div>
                       <h3>{item.label}</h3>
-                      <p className="muted">In {Math.max(1, Math.round(item.delaySeconds / 60))} min</p>
+                      <p className="muted">
+                        {item.mode === "clock" && item.clockTime
+                          ? `At ${item.clockTime}`
+                          : `Remind me in ${Math.max(1, Math.round(item.delaySeconds / 60))} min`}
+                      </p>
+                      {item.message?.trim() && <p className="muted">{item.message}</p>}
                     </div>
                   </div>
                   <label className="ios-switch">
@@ -1629,7 +1680,7 @@ function App() {
                   </label>
                 </article>
               ))}
-              <button type="button" className="routine-add-reminder" onClick={() => { setEditingRoutineReminder({ id: Date.now(), label: "Routine reminder", delaySeconds: 1800, enabled: true }); setShowRoutineReminderSheet(true); }}>
+              <button type="button" className="routine-add-reminder" onClick={() => { setEditingRoutineReminder({ id: Date.now(), label: "Routine reminder", message: "Time to review your routine.", mode: "in", delaySeconds: 1800, clockTime: "08:00", enabled: true }); setShowRoutineReminderSheet(true); }}>
                 + Add Reminder
               </button>
             </section>
@@ -1654,6 +1705,23 @@ function App() {
                 </p>
                 <p className="muted">Income this month: {money(budgetSnapshot.monthIncomeToDate)} of {money(monthlySalary)} planned.</p>
                 <p className="muted">Week starts Saturday. {budgetSnapshot.daysLeftInWeek} day(s) left this week, {budgetSnapshot.daysLeftInMonth} day(s) left this month.</p>
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <p className="settings-kicker">Appearance</p>
+              <h3>Theme</h3>
+              <div className="appearance-segment" role="tablist" aria-label="Theme mode">
+                {(["system", "light", "dark"] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    className={themePreference === opt ? "active" : ""}
+                    onClick={() => setThemePreference(opt)}
+                  >
+                    {opt[0].toUpperCase() + opt.slice(1)}
+                  </button>
+                ))}
               </div>
             </section>
 
@@ -2200,18 +2268,38 @@ function ReminderSheet({
   onSave: (item: RoutineReminderItem) => void;
 }) {
   const [label, setLabel] = useState(item.label);
+  const [message, setMessage] = useState(item.message || "");
+  const [mode, setMode] = useState<"in" | "clock">(item.mode ?? "in");
   const [delaySeconds, setDelaySeconds] = useState(String(item.delaySeconds));
+  const [clockTime, setClockTime] = useState(item.clockTime || "08:00");
   const [enabled, setEnabled] = useState(item.enabled);
   return (
     <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => {
         e.preventDefault();
         if (!label.trim()) return;
-        onSave({ ...item, label: label.trim(), delaySeconds: Math.max(60, Number(delaySeconds) || 1800), enabled });
+        onSave({
+          ...item,
+          label: label.trim(),
+          message: message.trim(),
+          mode,
+          delaySeconds: Math.max(60, Number(delaySeconds) || 1800),
+          clockTime,
+          enabled,
+        });
       }}>
         <h3>Reminder</h3>
         <label>Label<input value={label} onChange={(e) => setLabel(e.target.value)} required /></label>
-        <label>Delay (seconds)<input type="number" min={60} value={delaySeconds} onChange={(e) => setDelaySeconds(e.target.value)} /></label>
+        <label>Message<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} placeholder="What should this reminder say?" /></label>
+        <div className="task-filter-row">
+          <button type="button" className={mode === "in" ? "active" : ""} onClick={() => setMode("in")}>Remind me in</button>
+          <button type="button" className={mode === "clock" ? "active" : ""} onClick={() => setMode("clock")}>Clock time</button>
+        </div>
+        {mode === "in" ? (
+          <label>Remind me in (minutes)<input type="number" min={1} value={String(Math.max(1, Math.round((Number(delaySeconds) || 1800) / 60)))} onChange={(e) => setDelaySeconds(String(Math.max(60, Number(e.target.value || 0) * 60)))} /></label>
+        ) : (
+          <label>At time<input type="time" value={clockTime} onChange={(e) => setClockTime(e.target.value)} /></label>
+        )}
         <label className="routine-check-item">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           <span>Active</span>

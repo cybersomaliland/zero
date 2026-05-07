@@ -1,12 +1,40 @@
 :root {
-  font-family: "SF Pro Display", "Inter", "Segoe UI", sans-serif;
-  background: #f4f5f7;
-  color: #121212;
+  --bg-primary: #F2F2F7;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: #E5E5EA;
+  --text-primary: #000000;
+  --text-secondary: #6C6C70;
+  --text-muted: #AEAEB2;
+  --border: rgba(0,0,0,0.08);
+  --shadow: 0 2px 12px rgba(0,0,0,0.08);
+  --accent: #007AFF;
+  --danger: #FF3B30;
+  --success: #34C759;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+html[data-theme="dark"] {
+  --bg-primary: #000000;
+  --bg-secondary: #1C1C1E;
+  --bg-tertiary: #2C2C2E;
+  --text-primary: #FFFFFF;
+  --text-secondary: #8E8E93;
+  --text-muted: #48484A;
+  --border: rgba(255,255,255,0.08);
+  --shadow: 0 2px 12px rgba(0,0,0,0.4);
+  --accent: #0A84FF;
+  --danger: #FF453A;
+  --success: #30D158;
 }
 * { box-sizing: border-box; }
+html, body {
+  transition: background 0.3s ease, color 0.3s ease;
+}
 body {
   margin: 0;
-  background: linear-gradient(180deg, #f7f8fb 0%, #f1f2f4 100%);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   -webkit-text-size-adjust: 100%;
@@ -54,7 +82,7 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   letter-spacing: -0.01em;
   opacity: 0.9;
 }
-.muted { color: #7a7a82; margin: 0; }
+.muted { color: var(--text-secondary); margin: 0; }
 .content { display: grid; gap: 12px; }
 .content > * { width: 100%; min-width: 0; }
 .home-layout { display: grid; gap: 12px; }
@@ -1597,4 +1625,177 @@ input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; paddin
   .meal-add-row {
     grid-template-columns: 1fr;
   }
+}
+
+.appearance-segment {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+}
+.appearance-segment button {
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+}
+.appearance-segment button.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Theme variable mapping for existing surfaces */
+.card,
+.settings-card,
+.routine-card,
+.news-card,
+.briefing-card,
+.sheet {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary);
+  box-shadow: var(--shadow) !important;
+}
+body,
+.app-shell,
+.routine-layout {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.muted,
+.settings-kicker,
+.routine-section-kicker,
+.home-kicker,
+.news-hot-item .muted {
+  color: var(--text-secondary) !important;
+}
+input,
+select,
+textarea {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
+}
+.row button,
+.sheet button,
+.routine-now-card button,
+.news-live-dot,
+.danger-btn {
+  background: var(--accent);
+}
+.tabbar {
+  background: var(--bg-secondary) !important;
+  box-shadow: var(--shadow) !important;
+}
+.tabbar button {
+  color: var(--text-secondary) !important;
+}
+.tabbar .active {
+  background: var(--accent) !important;
+}
+.tabbar .active .tab-icon,
+.tabbar .active .tab-label {
+  color: #fff !important;
+}
+html[data-theme="dark"] .tabbar {
+  background: #1C1C1E !important;
+}
+html[data-theme="dark"] .tabbar button:not(.active) {
+  color: #8E8E93 !important;
+}
+.sheet-wrap {
+  background: color-mix(in srgb, #000 35%, transparent);
+}
+.tx-row,
+.routine-row,
+.timeline-hour,
+.routine-reminder-item,
+.snapshot-grid article,
+.daily-allowance-grid article {
+  background: var(--bg-tertiary) !important;
+  box-shadow: inset 0 0 0 1px var(--border) !important;
+}
+.ios-switch span {
+  background: var(--bg-tertiary) !important;
+}
+.ios-switch input:checked + span {
+  background: var(--success) !important;
+}
+.negative { color: var(--danger) !important; }
+.positive { color: var(--success) !important; }
+
+/* Hard override pass to remove residual light backgrounds */
+html[data-theme="dark"] .settings-formula,
+html[data-theme="dark"] .timeline-add-card,
+html[data-theme="dark"] .routine-step-label,
+html[data-theme="dark"] .timeline-memory,
+html[data-theme="dark"] .routine-reminder-form,
+html[data-theme="dark"] .daily-tip,
+html[data-theme="dark"] .briefing-summary,
+html[data-theme="dark"] .news-hot-item,
+html[data-theme="dark"] .day-summary-grid article,
+html[data-theme="dark"] .calendar-day-goal,
+html[data-theme="dark"] .calendar-day-improve,
+html[data-theme="dark"] .day-tx-item,
+html[data-theme="dark"] .morning-timeline,
+html[data-theme="dark"] .morning-news,
+html[data-theme="dark"] .morning-sheet,
+html[data-theme="dark"] .ai-input-wrap,
+html[data-theme="dark"] .ai-chat-log,
+html[data-theme="dark"] .ai-bubble.assistant,
+html[data-theme="dark"] .assistant-quick button,
+html[data-theme="dark"] .goal-pill,
+html[data-theme="dark"] .badge,
+html[data-theme="dark"] .task-filter-row,
+html[data-theme="dark"] .task-filter-row button,
+html[data-theme="dark"] .routine-check-pill,
+html[data-theme="dark"] .meal-summary-pills span,
+html[data-theme="dark"] .meal-icon,
+html[data-theme="dark"] .calendar-cell,
+html[data-theme="dark"] .calendar-cell.blank,
+html[data-theme="dark"] .urgency {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+  box-shadow: inset 0 0 0 1px var(--border) !important;
+}
+
+html[data-theme="dark"] .ai-chat,
+html[data-theme="dark"] .tabbar,
+html[data-theme="dark"] .sheet,
+html[data-theme="dark"] .morning-sheet,
+html[data-theme="dark"] .routine-confirm-sheet {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .top,
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] p,
+html[data-theme="dark"] span,
+html[data-theme="dark"] strong,
+html[data-theme="dark"] label {
+  color: var(--text-primary);
+}
+
+html[data-theme="dark"] .muted,
+html[data-theme="dark"] .home-section-head .muted,
+html[data-theme="dark"] .news-hot-item .muted,
+html[data-theme="dark"] .routine-reminder-left .muted,
+html[data-theme="dark"] .meal-row-content .muted {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .main-card,
+html[data-theme="dark"] .credit-card {
+  background: linear-gradient(145deg, #2a2d3a, #1f2230) !important;
+}
+
+html[data-theme="dark"] .tabbar button:not(.active) .tab-icon,
+html[data-theme="dark"] .tabbar button:not(.active) .tab-label {
+  color: #8E8E93 !important;
 }

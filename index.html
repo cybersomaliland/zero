@@ -2,11 +2,23 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=ios3" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=ios3" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/maskable.svg?v=ios3" media="(prefers-color-scheme: dark)" />
     <link rel="manifest" href="/manifest.webmanifest?v=ios3" />
     <meta name="theme-color" content="#0A84FF" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zero</title>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem("zero_theme_preference_v1") || "system";
+          var isDark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
     <style>
       @keyframes splashFloat {
         0%, 100% { transform: translateY(0px) scale(1); }
@@ -104,6 +116,26 @@
         text-transform: uppercase;
         text-align: center;
         color: #60708b;
+      }
+      html[data-theme="dark"] #zero-splash {
+        background:
+          radial-gradient(circle at 20% 16%, #ffffff12 0%, #00000000 46%),
+          radial-gradient(circle at 84% 88%, #0a84ff2d 0%, #00000000 50%),
+          linear-gradient(180deg, #111217 0%, #0b0c10 58%, #090a0e 100%);
+      }
+      html[data-theme="dark"] .zero-splash-title {
+        color: #f4f6ff;
+        text-shadow: none;
+      }
+      html[data-theme="dark"] .zero-splash-subtitle {
+        color: #8e8e93;
+      }
+      html[data-theme="dark"] .zero-splash-card {
+        background: linear-gradient(145deg, #2a2f43, #1f2436 62%, #171b2a);
+        box-shadow: 0 18px 42px #00000066, inset 0 1px 0 #ffffff22;
+      }
+      html[data-theme="dark"] .zero-splash-logo {
+        color: #ffffff;
       }
     </style>
   </head>
