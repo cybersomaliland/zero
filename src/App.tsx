@@ -1367,7 +1367,7 @@ function App() {
               <div className="settings-formula">
                 <p className="muted">Weekly safe (from monthly real balance): {money(weeklySafeToUse)}</p>
                 <p className="muted">
-                  Monthly real balance: {money(realBalance)} + {money(budgetSnapshot.plannedIncomeRemaining)} - {money(budgetSnapshot.remainingMonthSubscriptions)} - {money(settings.reservedSavings)}
+                  Monthly real balance: {money(realBalance)} - {money(budgetSnapshot.remainingMonthSubscriptions)} - {money(settings.reservedSavings)}
                 </p>
                 <p className="muted">Income this month: {money(budgetSnapshot.monthIncomeToDate)} of {money(monthlySalary)} planned.</p>
               </div>

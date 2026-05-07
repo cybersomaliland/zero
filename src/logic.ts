@@ -34,7 +34,9 @@ export function computeBudgetSnapshot(
   }, 0);
 
   const plannedIncomeRemaining = Math.max(0, settings.monthlySalary - monthIncomeToDate);
-  const monthlyRealBalance = settings.currentBalance + plannedIncomeRemaining - remainingMonthSubscriptions - settings.reservedSavings;
+  // Keep budget math cash-based: currentBalance already reflects realized money.
+  // Adding planned income here can inflate all derived balances.
+  const monthlyRealBalance = settings.currentBalance - remainingMonthSubscriptions - settings.reservedSavings;
   const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
   const weeklySafeToUse = Math.max(0, dailyAllowance * Math.min(daysLeftInWeek, daysLeftInMonth));
 
