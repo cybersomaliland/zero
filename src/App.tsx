@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, isSameWeek, parseISO, startOfDay, startOfMonth } from "date-fns";
+import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
-import { askFinanceAssistant, forecast, getUpcomingBills, money } from "./logic";
+import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
@@ -277,48 +277,34 @@ function App() {
     }
   };
 
-  const weeklySpent = useMemo(
-    () =>
-      transactions
-        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }) && tx.type === "expense")
-        .reduce((acc, tx) => acc + Math.abs(tx.amount), 0),
-    [transactions],
-  );
-  const weeklyIncome = useMemo(
-    () =>
-      transactions
-        .filter((tx) => isSameWeek(parseISO(tx.date), new Date(), { weekStartsOn: 1 }) && tx.type === "income")
-        .reduce((acc, tx) => acc + Math.abs(tx.amount), 0),
-    [transactions],
-  );
-  const weeklyUpcomingSubs = useMemo(
-    () => getUpcomingBills(subscriptions, 7).reduce((acc, sub) => acc + sub.amount, 0),
-    [subscriptions],
-  );
-  const monthlyTransactionsNet = useMemo(
-    () =>
-      transactions
-        .filter((tx) => format(parseISO(tx.date), "yyyy-MM") === format(new Date(), "yyyy-MM"))
-        .reduce((acc, tx) => {
-          const normalized = tx.type === "expense" ? -Math.abs(tx.amount) : Math.abs(tx.amount);
-          return acc + normalized;
-        }, 0),
-    [transactions],
-  );
-  const monthlyUpcomingSubs = useMemo(
-    () => getUpcomingBills(subscriptions, 30).reduce((acc, sub) => acc + sub.amount, 0),
-    [subscriptions],
-  );
-  const monthlySalary = settings?.monthlySalary ?? 0;
-  const realBalance = settings?.currentBalance ?? 0;
-  const monthlySavingsReserve = settings?.reservedSavings ?? 0;
-  const monthlyRealBalance = realBalance + monthlyTransactionsNet - monthlyUpcomingSubs - monthlySavingsReserve;
-  const daysLeftInMonth = Math.max(
-    1,
-    differenceInCalendarDays(endOfMonth(new Date()), startOfDay(new Date())) + 1,
-  );
-  const weeklySafeToUse = Math.max(0, (monthlyRealBalance / daysLeftInMonth) * 7);
-  const safePerDay = Math.max(0, monthlyRealBalance / daysLeftInMonth);
+  const budgetSnapshot = useMemo(() => {
+    if (!settings) {
+      return {
+        currentBalance: 0,
+        monthlyRealBalance: 0,
+        dailyAllowance: 0,
+        weeklySafeToUse: 0,
+        todaySpent: 0,
+        todayRemaining: 0,
+        weeklySpent: 0,
+        weeklyIncome: 0,
+        weeklyUpcomingSubs: 0,
+        daysLeftInMonth: 1,
+        monthIncomeToDate: 0,
+        monthExpenseToDate: 0,
+        plannedIncomeRemaining: 0,
+        remainingMonthSubscriptions: 0,
+      };
+    }
+    return computeBudgetSnapshot(transactions, subscriptions, settings);
+  }, [transactions, subscriptions, settings]);
+  const realBalance = budgetSnapshot.currentBalance;
+  const monthlyRealBalance = budgetSnapshot.monthlyRealBalance;
+  const weeklySafeToUse = budgetSnapshot.weeklySafeToUse;
+  const safePerDay = budgetSnapshot.dailyAllowance;
+  const weeklySpent = budgetSnapshot.weeklySpent;
+  const weeklyIncome = budgetSnapshot.weeklyIncome;
+  const weeklyUpcomingSubs = budgetSnapshot.weeklyUpcomingSubs;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
   const forecastData = useMemo(
     () => (settings ? forecast(transactions, subscriptions, settings) : []),
@@ -378,9 +364,8 @@ function App() {
     );
     return Math.max(0, monthlyRealBalance / daysLeftFromSelectedDay);
   }, [selectedCalendarDay, monthlyRealBalance]);
-  const todayKey = format(new Date(), "yyyy-MM-dd");
-  const todaySpent = dailyBreakdown[todayKey]?.spent || 0;
-  const todayRemaining = safePerDay - todaySpent;
+  const todaySpent = budgetSnapshot.todaySpent;
+  const todayRemaining = budgetSnapshot.todayRemaining;
   const streakDays = useMemo(() => {
     const txDays = new Set(
       transactions.map((tx) => format(parseISO(tx.date), "yyyy-MM-dd")),

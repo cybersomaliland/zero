@@ -27,6 +27,13 @@ const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:zero@example.com";
 const WEB_PUSH_ENABLED = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 const pushSubscriptions = new Map();
 const scheduledPushJobs = new Set();
+const MAX_QUESTION_LENGTH = 800;
+const MAX_CHAT_ITEMS = 12;
+const MAX_CHAT_TEXT_LENGTH = 800;
+const MAX_CONTEXT_DEPTH = 5;
+const MAX_CONTEXT_KEYS = 120;
+const MAX_CONTEXT_ARRAY_ITEMS = 120;
+const MAX_CONTEXT_STRING_LENGTH = 500;
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -184,6 +191,48 @@ async function sendPushToSubscription(subscription, payload) {
   }
 }
 
+function sanitizeQuestion(input) {
+  if (typeof input !== "string") return "";
+  return input.replace(/\s+/g, " ").trim().slice(0, MAX_QUESTION_LENGTH);
+}
+
+function sanitizeChatHistory(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .slice(-MAX_CHAT_ITEMS)
+    .map((entry) => {
+      const role = entry?.role === "assistant" ? "assistant" : "user";
+      const text = typeof entry?.text === "string"
+        ? entry.text.replace(/\s+/g, " ").trim().slice(0, MAX_CHAT_TEXT_LENGTH)
+        : "";
+      return { role, text };
+    })
+    .filter((entry) => entry.text.length > 0);
+}
+
+function sanitizeContext(value, depth = 0, keyBudget = { left: MAX_CONTEXT_KEYS }) {
+  if (depth > MAX_CONTEXT_DEPTH) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string") return value.slice(0, MAX_CONTEXT_STRING_LENGTH);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_CONTEXT_ARRAY_ITEMS)
+      .map((item) => sanitizeContext(item, depth + 1, keyBudget))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof value !== "object") return undefined;
+
+  const out = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (keyBudget.left <= 0) break;
+    keyBudget.left -= 1;
+    const cleaned = sanitizeContext(nested, depth + 1, keyBudget);
+    if (cleaned !== undefined) out[key] = cleaned;
+  }
+  return out;
+}
+
 app.get("/api/push/public-key", (req, res) => {
   if (!WEB_PUSH_ENABLED) {
     return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
@@ -325,31 +374,53 @@ app.post("/api/groq", async (req, res) => {
 
   try {
     const body = req.body ?? {};
-    const question = typeof body.question === "string" ? body.question : "";
-    const chatHistory = Array.isArray(body.chatHistory) ? body.chatHistory : [];
-    const context = body.context ?? {};
+    const question = sanitizeQuestion(body.question);
+    const chatHistory = sanitizeChatHistory(body.chatHistory);
+    const context = sanitizeContext(body.context ?? {});
 
     if (!question.trim()) {
       return res.status(400).json({ error: "Missing question" });
     }
 
+    const systemPrompt = [
+      "You are Zero AI, an elite personal finance copilot for one user.",
+      "Your job: convert the user's question and provided app data into clear, practical money guidance.",
+      "",
+      "Core rules:",
+      "1) Use only provided data; never invent balances, transactions, dates, subscriptions, income, or events.",
+      "2) Treat financeSnapshot as highest-priority source of truth when present.",
+      "3) Never confuse financeSnapshot.currentBalance (cash now) with financeSnapshot.monthlySalary (planned monthly income).",
+      "4) If data is insufficient or ambiguous, ask exactly one specific clarifying question and stop.",
+      "5) Keep response concise, actionable, and personalized.",
+      "",
+      "Response format:",
+      "- Line 1: direct answer/verdict (e.g., yes/no, safe/not safe, top finding).",
+      "- Line 2: key numbers that justify the answer (2-4 numbers max).",
+      "- Line 3: one concrete next action for today or this week.",
+      "- Line 4: optional follow-up question only if it materially improves accuracy.",
+      "",
+      "Style constraints:",
+      "- No raw JSON, no long lists, no generic disclaimers.",
+      "- Prefer short sentences and exact numbers from context.",
+      "- If prior chat exists, maintain continuity with it.",
+    ].join("\n");
+
     const messages = [
       {
         role: "system",
-        content:
-          "You are Zero AI, a personal finance assistant. Use the provided user data only. First infer the exact user intent, then answer with the most relevant numbers. Be concise and practical. Keep responses short (max 4 lines). Always personalize by using financeSnapshot as source of truth when available. IMPORTANT: financeSnapshot.currentBalance is real account balance now, while financeSnapshot.monthlySalary is planned monthly income. Never confuse them. If the request is ambiguous or missing a key amount/date, ask one precise clarifying question instead of guessing. Never dump raw JSON or full datasets. End every answer with exactly one useful follow-up question.",
+        content: systemPrompt,
       },
       {
         role: "user",
         content: `User finance data JSON:\n${JSON.stringify(context)}`,
       },
-      ...chatHistory.slice(-12).map((m) => ({
+      ...chatHistory.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: String(m.text ?? ""),
       })),
       {
         role: "user",
-        content: `Latest user request: ${question}\n\nRespond with continuity from previous messages, short personalized advice, and one follow-up question.`,
+        content: `Latest user request: ${question}\n\nInfer user intent first, then answer with concise reasoning and concrete numbers. Ask a follow-up only when needed for accuracy.`,
       },
     ];
 

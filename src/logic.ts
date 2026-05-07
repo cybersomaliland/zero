@@ -1,4 +1,4 @@
-import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, format, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
+import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, endOfMonth, endOfWeek, format, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
 import { inferCategoryFromText } from "./categories";
 import type { Settings, Subscription, Transaction } from "./types";
 
@@ -6,6 +6,72 @@ export const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
 
 export const dayKey = (date: string) => format(parseISO(date), "yyyy-MM-dd");
+
+export function computeBudgetSnapshot(
+  transactions: Transaction[],
+  subscriptions: Subscription[],
+  settings: Settings,
+  referenceDate = new Date(),
+) {
+  const nowDay = startOfDay(referenceDate);
+  const monthKey = format(referenceDate, "yyyy-MM");
+  const monthEnd = endOfMonth(referenceDate);
+  const daysLeftInMonth = Math.max(1, differenceInCalendarDays(monthEnd, nowDay) + 1);
+  const daysLeftInWeek = Math.max(1, differenceInCalendarDays(endOfWeek(referenceDate, { weekStartsOn: 1 }), nowDay) + 1);
+
+  const monthTransactions = transactions.filter((tx) => format(parseISO(tx.date), "yyyy-MM") === monthKey);
+  const monthIncomeToDate = monthTransactions
+    .filter((tx) => tx.type === "income" && parseISO(tx.date) <= referenceDate)
+    .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const monthExpenseToDate = monthTransactions
+    .filter((tx) => tx.type === "expense" && parseISO(tx.date) <= referenceDate)
+    .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+
+  const remainingMonthSubscriptions = subscriptions.reduce((acc, sub) => {
+    const due = parseISO(sub.nextBillingDate);
+    if (due < nowDay || due > monthEnd) return acc;
+    return acc + sub.amount;
+  }, 0);
+
+  const plannedIncomeRemaining = Math.max(0, settings.monthlySalary - monthIncomeToDate);
+  const monthlyRealBalance = settings.currentBalance + plannedIncomeRemaining - remainingMonthSubscriptions - settings.reservedSavings;
+  const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
+  const weeklySafeToUse = Math.max(0, dailyAllowance * Math.min(daysLeftInWeek, daysLeftInMonth));
+
+  const todayKey = format(referenceDate, "yyyy-MM-dd");
+  const todaySpent = transactions
+    .filter((tx) => tx.type === "expense" && format(parseISO(tx.date), "yyyy-MM-dd") === todayKey)
+    .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const todayRemaining = dailyAllowance - todaySpent;
+  const weeklySpent = transactions
+    .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: 1 }))
+    .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const weeklyIncome = transactions
+    .filter((tx) => tx.type === "income" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: 1 }))
+    .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const weeklyUpcomingSubs = subscriptions.reduce((acc, sub) => {
+    const due = parseISO(sub.nextBillingDate);
+    const days = differenceInCalendarDays(due, referenceDate);
+    return days >= 0 && days <= 7 ? acc + sub.amount : acc;
+  }, 0);
+
+  return {
+    currentBalance: settings.currentBalance,
+    monthlyRealBalance,
+    dailyAllowance,
+    weeklySafeToUse,
+    todaySpent,
+    todayRemaining,
+    weeklySpent,
+    weeklyIncome,
+    weeklyUpcomingSubs,
+    daysLeftInMonth,
+    monthIncomeToDate,
+    monthExpenseToDate,
+    plannedIncomeRemaining,
+    remainingMonthSubscriptions,
+  };
+}
 
 export function inferCategory(input: string, rules: { keyword: string; category: string }[]) {
   const lowered = input.toLowerCase();
@@ -125,8 +191,8 @@ export function askFinanceAssistant(
   const minPoint = [...forecastData].sort((a, b) => a.balance - b.balance)[0];
   const mealMatch = q.match(/\$?\s*(\d+(?:\.\d{1,2})?)/);
   const askedAmount = mealMatch ? Number(mealMatch[1]) : null;
-  const upcoming30 = getUpcomingBills(subscriptions, 30).reduce((acc, s) => acc + s.amount, 0);
-  const safeToday = settings.currentBalance - settings.reservedSavings - upcoming30;
+  const budget = computeBudgetSnapshot(transactions, subscriptions, settings);
+  const safeToday = Math.max(0, budget.todayRemaining);
 
   if ((q.includes("afford") || q.includes("meal")) && askedAmount === null) {
     return `I can help with that. Tell me the meal price, for example: "Can I afford a $18 meal today?"`;
@@ -137,7 +203,7 @@ export function askFinanceAssistant(
       const afterPurchase = safeToday - amount;
       return `Yes, you can afford this today. Meal: ${money(amount)}. Safe-to-spend now: ${money(safeToday)}. After buying it, you still have about ${money(afterPurchase)} of safe spending room before planned bills and savings.`;
     }
-    const firstAffordable = forecastData.find((p) => p.balance - settings.reservedSavings - upcoming30 >= amount);
+    const firstAffordable = forecastData.find((p) => p.balance - settings.reservedSavings >= amount);
     if (firstAffordable) {
       const idx = forecastData.indexOf(firstAffordable);
       const approxDays = idx * 3;
