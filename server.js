@@ -2,6 +2,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import webpush from "web-push";
+import cron from "node-cron";
+import { differenceInCalendarDays, parseISO } from "date-fns";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,7 +28,14 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:zero@example.com";
 const WEB_PUSH_ENABLED = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 const pushSubscriptions = new Map();
-const scheduledPushJobs = new Set();
+const scheduledPushJobs = new Map();
+const lastNotificationVariantByType = new Map();
+const latestNotificationContext = {
+  finance: { todayRemaining: 0, dailyAllowance: 0, savePerDay: 0, overBy: 0 },
+  tasks: [],
+  subscriptions: [],
+  routine: { currentBlock: "", nextBlock: "", nextBlockTime: "" },
+};
 const MAX_QUESTION_LENGTH = 800;
 const MAX_CHAT_ITEMS = 12;
 const MAX_CHAT_TEXT_LENGTH = 800;
@@ -137,6 +146,129 @@ function serializePushError(error) {
   return `${statusCode ?? "n/a"} ${message}${body ? ` - ${String(body).slice(0, 200)}` : ""}`;
 }
 
+const FORBIDDEN_WORDS = /\b(hi there|reminder|kindly|please|open zero|notification|alert)\b/gi;
+
+function trimWords(input, maxWords) {
+  return String(input).replace(/\s+/g, " ").trim().split(" ").slice(0, maxWords).join(" ").trim();
+}
+
+function compactLabel(input, fallback = "Bill") {
+  const safe = String(input || "").replace(/[^\w\s&.-]/g, "").trim();
+  if (!safe) return fallback;
+  return trimWords(safe, 3);
+}
+
+function amountText(value) {
+  const num = Number(value || 0);
+  return `$${Math.abs(num).toFixed(2)}`;
+}
+
+function interpolateTemplate(template, data) {
+  return String(template).replace(/\[([A-Za-z]+)\]/g, (_, key) => {
+    const val = data?.[key];
+    return val === undefined || val === null ? "" : String(val);
+  });
+}
+
+function pickTemplate(type, templates) {
+  if (!Array.isArray(templates) || templates.length === 0) return "";
+  let idx = Math.floor(Math.random() * templates.length);
+  const last = lastNotificationVariantByType.get(type);
+  if (templates.length > 1 && idx === last) {
+    idx = (idx + 1 + Math.floor(Math.random() * (templates.length - 1))) % templates.length;
+  }
+  lastNotificationVariantByType.set(type, idx);
+  return templates[idx];
+}
+
+function buildNotification(type, data = {}) {
+  const bill = compactLabel(data.bill || data.billName, "Bill");
+  const task = compactLabel(data.task || data.taskName, "Task");
+  const amount = amountText(data.amount || data.todayAmount || data.saveAmount || data.overBy || 0);
+  const day = Number(data.day || data.dayIndex || 1);
+  const tasksCount = Number(data.tasksCount || data.openTasks || 0);
+  const block = compactLabel(data.block || data.nextBlock || "Focus block", "Focus block");
+  const time = String(data.time || data.nextBlockTime || "9:00").trim() || "9:00";
+
+  const variants = {
+    bill_due_tomorrow: [
+      "[Bill] is coming for [amount] tomorrow",
+      "Tomorrow: [Bill] takes [amount]. Just so you know.",
+      "[amount] out tomorrow — [Bill] doesn't forget",
+      "One day left before [Bill] charges you",
+    ],
+    bill_due_today: [
+      "[Bill] hits today. [amount] gone.",
+      "Today's the day — [amount] to [Bill]",
+      "⚠️ [Bill] charges today. [amount].",
+      "It's happening today. [amount] · [Bill]",
+    ],
+    over_budget: [
+      "You've passed your limit. Rest is tomorrow's money.",
+      "Today's gone over. [amount] into tomorrow's allowance.",
+      "Slightly over — [amount] past today's limit",
+      "Past the line today. Tomorrow, tighter.",
+    ],
+    daily_allowance_morning: [
+      "☀️ [amount] to work with today. Make it count.",
+      "New day. [amount] on the clock.",
+      "Today's budget is live. [amount] — go easy.",
+      "Morning. You've got [amount] for today.",
+    ],
+    savings: [
+      "Day [X] of 3. [amount] saved today keeps the plan alive.",
+      "Save [amount] today. You're close to the buffer.",
+      "One save away from a good week.",
+      "[amount] today. That's all.",
+    ],
+    task_still_open: [
+      "Still open: [task]. You got this.",
+      "[task] — still on the list. Quick win?",
+      "This one's been waiting: [task]",
+      "Haven't touched [task] yet today.",
+    ],
+    morning_briefing: [
+      "☀️ [X] tasks, [amount] today, [block] at [time]",
+      "Morning. [X] tasks · [amount] · [block] at [time]",
+      "Day's ready. [X] things to do, [amount] to spend.",
+      "You've got [X] tasks and [amount]. Let's go.",
+    ],
+    custom: ["[message]"],
+  };
+
+  const titles = {
+    bill_due_tomorrow: bill,
+    bill_due_today: bill,
+    over_budget: "Budget line",
+    daily_allowance_morning: "Today budget",
+    savings: "Savings pulse",
+    task_still_open: task,
+    morning_briefing: "Morning pulse",
+    custom: compactLabel(data.title, "Update"),
+  };
+
+  const template = pickTemplate(type, variants[type] || variants.custom);
+  const bodyRaw = interpolateTemplate(template, {
+    Bill: bill,
+    amount,
+    task,
+    X: String(day || tasksCount || 1),
+    block,
+    time,
+    message: String(data.message || ""),
+  }).replace(FORBIDDEN_WORDS, "").trim();
+
+  const title = trimWords(String(titles[type] || "Update").replace(FORBIDDEN_WORDS, ""), 5);
+  const body = trimWords(bodyRaw, 10);
+
+  return {
+    title: title || "Update",
+    body: body || "Data updated.",
+    url: "/",
+    tag: `zero-${type}`,
+  };
+}
+
 async function sendPushToSubscription(subscription, payload) {
   try {
     await webpush.sendNotification(subscription, JSON.stringify(payload));
@@ -149,6 +281,17 @@ async function sendPushToSubscription(subscription, payload) {
     }
     return { ok: false, detail: serializePushError(error) };
   }
+}
+
+async function broadcastPush(payload) {
+  const targets = [...pushSubscriptions.values()];
+  if (targets.length === 0) return { ok: false, sent: 0, failed: 0 };
+  const results = await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
+  return {
+    ok: true,
+    sent: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+  };
 }
 
 function sanitizeQuestion(input) {
@@ -210,16 +353,7 @@ app.post("/api/push/subscribe", async (req, res) => {
   }
   pushSubscriptions.set(subscription.endpoint, subscription);
 
-  const displayName = String(req.body?.displayName || "there").trim() || "there";
-  const upcomingCount = Number(req.body?.upcomingCount || 0);
-  const firstPayload = {
-    title: "Coach Zero connected",
-    body: upcomingCount > 0
-      ? `Hi ${displayName}, notifications are live. ${upcomingCount} bill(s) are coming up.`
-      : `Hi ${displayName}, notifications are live. I will keep your day and money on track.`,
-    url: "/",
-    tag: "zero-connected",
-  };
+  const firstPayload = buildNotification("custom", { title: "Zero ready", message: "Push channel connected." });
   const sent = await sendPushToSubscription(subscription, firstPayload);
   return res.status(200).json({ ok: true, sent });
 });
@@ -249,82 +383,132 @@ app.post("/api/push/test", async (req, res) => {
   if (!WEB_PUSH_ENABLED) {
     return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
   }
-  const displayName = String(req.body?.displayName || "there").trim() || "there";
-  const upcomingCount = Number(req.body?.upcomingCount || 0);
-  const payload = {
-    title: "Zero reminder",
-    body: upcomingCount > 0
-      ? `Hi ${displayName}, you have ${upcomingCount} upcoming bill(s). Open Zero now.`
-      : `Hi ${displayName}, quick check-in: review your spending and routine blocks.`,
-    url: "/",
-    tag: "zero-test",
-  };
-  const targets = [...pushSubscriptions.values()];
-  if (targets.length === 0) {
+  if (pushSubscriptions.size === 0) {
     return res.status(404).json({ error: "No active push subscriptions yet" });
   }
-  const results = await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
-  return res.status(200).json({
-    ok: true,
-    sent: results.filter((r) => r.ok).length,
-    failed: results.filter((r) => !r.ok).length,
+  const payload = buildNotification("morning_briefing", {
+    tasksCount: Number(req.body?.tasksCount || latestNotificationContext.tasks.length || 0),
+    amount: Number(req.body?.amount ?? latestNotificationContext.finance?.todayRemaining ?? 0),
+    block: req.body?.block || latestNotificationContext.routine?.nextBlock || "Focus",
+    time: req.body?.time || latestNotificationContext.routine?.nextBlockTime || "9:00",
   });
+  const result = await broadcastPush(payload);
+  return res.status(200).json(result);
+});
+
+app.post("/api/notification-context", (req, res) => {
+  const incoming = req.body || {};
+  if (incoming.finance && typeof incoming.finance === "object") {
+    latestNotificationContext.finance = { ...latestNotificationContext.finance, ...incoming.finance };
+  }
+  if (Array.isArray(incoming.tasks)) latestNotificationContext.tasks = incoming.tasks.slice(0, 50);
+  if (Array.isArray(incoming.subscriptions)) latestNotificationContext.subscriptions = incoming.subscriptions.slice(0, 100);
+  if (incoming.routine && typeof incoming.routine === "object") {
+    latestNotificationContext.routine = { ...latestNotificationContext.routine, ...incoming.routine };
+  }
+  return res.status(200).json({ ok: true });
 });
 
 app.post("/api/send-notification", async (req, res) => {
   if (!WEB_PUSH_ENABLED) {
     return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
   }
-  const title = String(req.body?.title || "").trim();
-  const body = String(req.body?.body || "").trim();
-  const displayName = String(req.body?.displayName || "").trim();
-  if (!title || !body) {
-    return res.status(400).json({ error: "title and body are required" });
-  }
-  const personalizedBody = displayName ? `Hi ${displayName}, ${body}` : body;
-  const payload = { title, body: personalizedBody, icon: "/icon.svg", url: "/" };
-  const targets = [...pushSubscriptions.values()];
-  if (targets.length === 0) {
-    return res.status(404).json({ error: "No active push subscriptions yet" });
-  }
-  const results = await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
-  return res.status(200).json({
-    ok: true,
-    sent: results.filter((r) => r.ok).length,
-    failed: results.filter((r) => !r.ok).length,
-  });
+  const type = String(req.body?.type || "custom").trim();
+  const payload = buildNotification(type, req.body?.data || {});
+  const result = await broadcastPush(payload);
+  if (!result.ok) return res.status(404).json({ error: "No active push subscriptions yet" });
+  return res.status(200).json(result);
 });
 
 app.post("/api/schedule-notification", (req, res) => {
   if (!WEB_PUSH_ENABLED) {
     return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
   }
-  const title = String(req.body?.title || "").trim();
-  const body = String(req.body?.body || "").trim();
-  const displayName = String(req.body?.displayName || "").trim();
-  const delaySeconds = Number(req.body?.delaySeconds || 0);
-  if (!title || !body) {
-    return res.status(400).json({ error: "title and body are required" });
+  const type = String(req.body?.type || "").trim();
+  const data = req.body?.data || {};
+  const delayMs = Number(req.body?.delayMs || 0);
+  if (!type) {
+    return res.status(400).json({ error: "type is required" });
   }
-  if (!Number.isFinite(delaySeconds) || delaySeconds < 1) {
-    return res.status(400).json({ error: "delaySeconds must be >= 1" });
+  if (!Number.isFinite(delayMs) || delayMs < 1) {
+    return res.status(400).json({ error: "delayMs must be >= 1" });
   }
-  const targets = [...pushSubscriptions.values()];
-  if (targets.length === 0) {
-    return res.status(404).json({ error: "No active push subscriptions yet" });
-  }
-  const personalizedBody = displayName ? `Hi ${displayName}, ${body}` : body;
-  const payload = { title, body: personalizedBody, icon: "/icon.svg", url: "/" };
+
   const timeoutId = setTimeout(async () => {
     try {
-      await Promise.all(targets.map((sub) => sendPushToSubscription(sub, payload)));
+      const payload = buildNotification(type, data);
+      await broadcastPush(payload);
     } finally {
-      scheduledPushJobs.delete(timeoutId);
+      scheduledPushJobs.delete(String(timeoutId));
     }
-  }, Math.floor(delaySeconds * 1000));
-  scheduledPushJobs.add(timeoutId);
-  return res.status(200).json({ ok: true, scheduledInSeconds: Math.floor(delaySeconds) });
+  }, Math.floor(delayMs));
+  scheduledPushJobs.set(String(timeoutId), timeoutId);
+  return res.status(200).json({ ok: true, type, scheduledInMs: Math.floor(delayMs) });
 });
+
+app.post("/api/spending-update", async (req, res) => {
+  if (!WEB_PUSH_ENABLED) {
+    return res.status(503).json({ error: "Web push disabled. Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY." });
+  }
+  const todayRemaining = Number(req.body?.todayRemaining ?? latestNotificationContext.finance.todayRemaining ?? 0);
+  const overBy = Math.max(0, Number(req.body?.overBy ?? Math.abs(Math.min(0, todayRemaining))));
+  latestNotificationContext.finance.todayRemaining = todayRemaining;
+  latestNotificationContext.finance.overBy = overBy;
+  if (todayRemaining >= 0) {
+    return res.status(200).json({ ok: true, triggered: false });
+  }
+  const payload = buildNotification("over_budget", { amount: overBy });
+  const result = await broadcastPush(payload);
+  return res.status(200).json({ ok: true, triggered: true, ...result });
+});
+
+function dueInDays(isoDate) {
+  return differenceInCalendarDays(parseISO(isoDate), new Date());
+}
+
+async function runMorningBriefingJob() {
+  const data = latestNotificationContext;
+  const openTasks = Array.isArray(data.tasks) ? data.tasks.filter((t) => !t.done) : [];
+  const payload = buildNotification("morning_briefing", {
+    tasksCount: openTasks.length,
+    amount: Number(data.finance?.todayRemaining ?? data.finance?.dailyAllowance ?? 0),
+    block: data.routine?.nextBlock || data.routine?.currentBlock || "Focus",
+    time: data.routine?.nextBlockTime || "9:00",
+  });
+  await broadcastPush(payload);
+}
+
+async function runDailyAllowanceJob() {
+  const payload = buildNotification("daily_allowance_morning", {
+    amount: Number(latestNotificationContext.finance?.dailyAllowance ?? 0),
+  });
+  await broadcastPush(payload);
+}
+
+async function runBillCheckerJob() {
+  const subs = Array.isArray(latestNotificationContext.subscriptions) ? latestNotificationContext.subscriptions : [];
+  for (const sub of subs) {
+    const dueDays = dueInDays(sub.nextBillingDate || sub.dueDate || "");
+    if (dueDays === 0) {
+      await broadcastPush(buildNotification("bill_due_today", { bill: sub.name, amount: sub.amount }));
+    } else if (dueDays === 1) {
+      await broadcastPush(buildNotification("bill_due_tomorrow", { bill: sub.name, amount: sub.amount }));
+    }
+  }
+}
+
+async function runOpenTaskJob() {
+  const openTasks = Array.isArray(latestNotificationContext.tasks) ? latestNotificationContext.tasks.filter((t) => !t.done) : [];
+  if (openTasks.length === 0) return;
+  await broadcastPush(buildNotification("task_still_open", { task: openTasks[0]?.title || "Task" }));
+}
+
+if (WEB_PUSH_ENABLED) {
+  cron.schedule("0 7 * * *", () => { void runMorningBriefingJob(); });
+  cron.schedule("0 8 * * *", () => { void runDailyAllowanceJob(); });
+  cron.schedule("0 9 * * *", () => { void runBillCheckerJob(); });
+  cron.schedule("0 15 * * *", () => { void runOpenTaskJob(); });
+}
 
 app.post("/api/groq", async (req, res) => {
   const key = process.env.GROQ_API_KEY;

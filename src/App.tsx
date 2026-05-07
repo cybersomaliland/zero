@@ -137,8 +137,6 @@ function App() {
   const [testNotifDelaySec, setTestNotifDelaySec] = useState("10");
   const [scheduledNotifAt, setScheduledNotifAt] = useState<number | null>(null);
   const [timerNow, setTimerNow] = useState<number>(Date.now());
-  const scheduledNotifTimeoutRef = useRef<number | null>(null);
-  const routineNotificationCacheRef = useRef<Record<string, 1>>({});
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
     try {
       const saved = localStorage.getItem("zero_theme_preference_v1");
@@ -350,60 +348,6 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
-  useEffect(() => {
-    if (notifState !== "granted") return;
-    if (!("serviceWorker" in navigator)) return;
-    if (timelineEvents.length === 0) return;
-
-    const checkRoutineNotifications = async () => {
-      const now = new Date();
-      const nowMs = now.getTime();
-      const dayKey = format(now, "yyyy-MM-dd");
-      const registration = await navigator.serviceWorker.ready;
-
-      for (const event of timelineEvents) {
-        const startAt = new Date(now);
-        startAt.setHours(event.hour, 0, 0, 0);
-        const endAt = new Date(startAt.getTime() + Math.max(15, event.durationMinutes ?? 60) * 60_000);
-
-        const startDelta = nowMs - startAt.getTime();
-        const endDelta = nowMs - endAt.getTime();
-        const startKey = `${dayKey}_${event.id}_start`;
-        const endKey = `${dayKey}_${event.id}_end`;
-
-        if (startDelta >= 0 && startDelta < 60_000 && !routineNotificationCacheRef.current[startKey]) {
-          await registration.showNotification("Routine block started", {
-            body: `${event.title} is starting now.`,
-            icon: "/icon.svg",
-            badge: "/icon.svg",
-            tag: startKey,
-            data: { url: "/" },
-          });
-          routineNotificationCacheRef.current[startKey] = 1;
-        }
-
-        if (endDelta >= 0 && endDelta < 60_000 && !routineNotificationCacheRef.current[endKey]) {
-          await registration.showNotification("Routine block finished", {
-            body: `${event.title} just ended. Time for your next move.`,
-            icon: "/icon.svg",
-            badge: "/icon.svg",
-            tag: endKey,
-            data: { url: "/" },
-          });
-          routineNotificationCacheRef.current[endKey] = 1;
-        }
-      }
-
-      localStorage.setItem("zero_routine_notified_v1", JSON.stringify(routineNotificationCacheRef.current));
-    };
-
-    void checkRoutineNotifications();
-    const id = window.setInterval(() => {
-      void checkRoutineNotifications();
-    }, 30_000);
-    return () => window.clearInterval(id);
-  }, [notifState, timelineEvents]);
-
   const refreshNews = async () => {
     const controller = new AbortController();
     setNewsLoading(true);
@@ -649,6 +593,40 @@ function App() {
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
+  useEffect(() => {
+    if (notifState !== "granted") return;
+    void fetch("/api/notification-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        finance: {
+          todayRemaining,
+          dailyAllowance: safePerDay,
+          savePerDay: savePlan.savePerDay,
+        },
+        tasks: tasks.map((t) => ({ title: t.title, done: t.done, priority: t.priority })),
+        subscriptions: subscriptions.map((s) => ({ name: s.name, amount: s.amount, nextBillingDate: s.nextBillingDate })),
+        routine: {
+          currentBlock: currentTimelineBlock?.title || "",
+          nextBlock: nextTimelineBlock?.title || "",
+          nextBlockTime: nextTimelineBlock
+            ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`)
+            : "",
+        },
+      }),
+    }).catch(() => {});
+  }, [notifState, todayRemaining, safePerDay, savePlan.savePerDay, tasks, subscriptions, currentTimelineBlock, nextTimelineBlock]);
+  useEffect(() => {
+    if (notifState !== "granted") return;
+    void fetch("/api/spending-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        todayRemaining,
+        overBy: Math.max(0, Math.abs(Math.min(0, todayRemaining))),
+      }),
+    }).catch(() => {});
+  }, [notifState, transactions.length, todayRemaining]);
   const weeklyDueBills = useMemo(
     () => upcoming.filter((bill) => {
       const daysAway = differenceInCalendarDays(parseISO(bill.dueDate), startOfDay(new Date()));
@@ -859,16 +837,13 @@ function App() {
       setPushStatusDetail("Permission not granted.");
       return;
     }
-    const preferredName = settings?.profileName?.trim() || "there";
-
     const registration = await navigator.serviceWorker.ready;
     registration.active?.postMessage({ type: "UPDATE_NOTIFICATION_DATA", payload: { upcomingCount: upcoming.length } });
-    await registration.showNotification("Zero notifications enabled", {
-      body: `Hi ${preferredName}, I will remind you about upcoming bills and daily money check-ins.`,
-      icon: "/icon.svg",
-      badge: "/icon.svg",
-      tag: "zero-enabled",
-    });
+    await fetch("/api/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "custom", data: { title: "Push ready", message: "Schedules are active." } }),
+    }).catch(() => {});
 
     const periodic = (registration as ServiceWorkerRegistration & {
       periodicSync?: { register: (tag: string, options: { minInterval: number }) => Promise<void> };
@@ -934,14 +909,15 @@ function App() {
 
   const testNotification = async () => {
     if (!("serviceWorker" in navigator)) return;
-    const preferredName = settings?.profileName?.trim() || "there";
     try {
       const response = await fetch("/api/push/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName: preferredName,
-          upcomingCount: upcoming.length,
+          tasksCount: tasks.filter((t) => !t.done).length,
+          amount: todayRemaining,
+          block: nextTimelineBlock?.title || currentTimelineBlock?.title || "Focus",
+          time: nextTimelineBlock ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`) : "9:00",
         }),
       });
       if (response.ok) {
@@ -952,59 +928,37 @@ function App() {
       const errorBody = await response.json().catch(() => ({}));
       setPushStatusDetail(String(errorBody?.error || "Push test failed on server."));
     } catch {
-      // fallback to local notification below
-      setPushStatusDetail("Push server not reachable. Sent local notification fallback.");
+      setPushStatusDetail("Push server not reachable.");
     }
-    const registration = await navigator.serviceWorker.ready;
-    await registration.showNotification("Zero reminder", {
-      body: `Hi ${preferredName}, you have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
-      icon: "/icon.svg",
-      badge: "/icon.svg",
-      tag: "zero-test",
-    });
   };
   const scheduleTestNotification = () => {
     if (notifState !== "granted") return;
     const parsed = Number(testNotifDelaySec);
     const delaySec = Math.max(1, Math.min(3600, Number.isFinite(parsed) ? Math.floor(parsed) : 10));
-    const preferredName = settings?.profileName?.trim() || "there";
     setTestNotifDelaySec(String(delaySec));
-    if (scheduledNotifTimeoutRef.current) {
-      window.clearTimeout(scheduledNotifTimeoutRef.current);
-    }
     const fireAt = Date.now() + delaySec * 1000;
     setScheduledNotifAt(fireAt);
     void fetch("/api/schedule-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: "Zero reminder",
-        body: `you have ${upcoming.length} upcoming bill(s). Open Zero for details.`,
-        displayName: preferredName,
-        delaySeconds: delaySec,
+        type: "morning_briefing",
+        data: {
+          tasksCount: tasks.filter((t) => !t.done).length,
+          amount: todayRemaining,
+          block: nextTimelineBlock?.title || currentTimelineBlock?.title || "Focus",
+          time: nextTimelineBlock ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`) : "9:00",
+        },
+        delayMs: delaySec * 1000,
       }),
     }).then(async (response) => {
       if (!response.ok) {
-        setPushStatusDetail("Server schedule failed. Keeping local timer fallback.");
-        scheduledNotifTimeoutRef.current = window.setTimeout(() => {
-          void testNotification();
-          setScheduledNotifAt(null);
-          scheduledNotifTimeoutRef.current = null;
-        }, delaySec * 1000);
+        setPushStatusDetail("Server schedule failed.");
         return;
       }
       setPushStatusDetail(`Notification scheduled on server in ${delaySec}s.`);
-      scheduledNotifTimeoutRef.current = window.setTimeout(() => {
-        setScheduledNotifAt(null);
-        scheduledNotifTimeoutRef.current = null;
-      }, delaySec * 1000);
     }).catch(() => {
-      setPushStatusDetail("Server schedule unreachable. Keeping local timer fallback.");
-      scheduledNotifTimeoutRef.current = window.setTimeout(() => {
-        void testNotification();
-        setScheduledNotifAt(null);
-        scheduledNotifTimeoutRef.current = null;
-      }, delaySec * 1000);
+      setPushStatusDetail("Server schedule unreachable.");
     });
   };
   const applyTemplateToToday = () => {
@@ -1053,10 +1007,9 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: item.label,
-          body: item.message?.trim() || `Routine reminder: ${item.label}`,
-          displayName: settings?.profileName || "there",
-          delaySeconds,
+          type: "task_still_open",
+          data: { task: item.label, message: item.message?.trim() || item.label },
+          delayMs: delaySeconds * 1000,
         }),
       });
     } catch {
@@ -1073,7 +1026,6 @@ function App() {
       return;
     }
     const lastAssistant = [...chat].reverse().find((msg) => msg.role === "assistant");
-    const preferredName = settings?.profileName?.trim() || "there";
     if (!lastAssistant) {
       setPushStatusDetail("No Coach Zero message found yet.");
       return;
@@ -1082,9 +1034,8 @@ function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: `Coach Zero for ${preferredName}`,
-        body: lastAssistant.text.slice(0, 180),
-        displayName: preferredName,
+        type: "custom",
+        data: { title: "Coach zero", message: lastAssistant.text.slice(0, 120) },
       }),
     });
     if (!response.ok) {
@@ -1096,7 +1047,6 @@ function App() {
   };
   const runAssistantAutomation = async (question: string) => {
     const notes: string[] = [];
-    const preferredName = settings?.profileName?.trim() || "there";
     const text = question.toLowerCase();
     const asksReminder = /remind me|set reminder|schedule reminder|routine reminder/.test(text);
     const asksNotification = /notify me now|send (me )?a notification|ping me/.test(text);
@@ -1118,10 +1068,9 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: "Coach Zero reminder",
-          body: reminderMessage,
-          displayName: preferredName,
-          delaySeconds,
+          type: "custom",
+          data: { title: "Coach zero", message: reminderMessage },
+          delayMs: delaySeconds * 1000,
         }),
       });
       if (response.ok) {
@@ -1140,9 +1089,8 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `Coach Zero for ${preferredName}`,
-          body: "Quick nudge: review your priorities and stay on target today.",
-          displayName: preferredName,
+          type: "custom",
+          data: { title: "Coach zero", message: "Review priorities and stay on target today." },
         }),
       });
       if (response.ok) {
@@ -1321,16 +1269,6 @@ function App() {
     setNotifState(Notification.permission as "default" | "granted" | "denied");
   }, []);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("zero_routine_notified_v1");
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, 1>;
-      if (parsed && typeof parsed === "object") routineNotificationCacheRef.current = parsed;
-    } catch {
-      // ignore corrupt cache
-    }
-  }, []);
-  useEffect(() => {
     if (notifState !== "granted") return;
     void subscribeUser();
   }, [notifState]);
@@ -1362,14 +1300,6 @@ function App() {
     const id = window.setTimeout(() => setShowReminderSheet(false), 2200);
     return () => window.clearTimeout(id);
   }, [showReminderSheet]);
-  useEffect(() => {
-    return () => {
-      if (scheduledNotifTimeoutRef.current) {
-        window.clearTimeout(scheduledNotifTimeoutRef.current);
-      }
-    };
-  }, []);
-
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker.ready.then((registration) => {
