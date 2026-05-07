@@ -1623,19 +1623,11 @@ function App() {
               <div className="recent-tx-head">
                 <div>
                   <h3>Recent transactions</h3>
-                  <p className="muted">Latest money moves</p>
+                  <p className="muted recent-tx-subline">
+                    Spent {money(recentTransactionSummary.expense)} · Added {money(recentTransactionSummary.income)}
+                  </p>
                 </div>
                 <p className="recent-tx-count">{recentTransactionSummary.count} items</p>
-              </div>
-              <div className="recent-tx-stats">
-                <article>
-                  <p className="muted">Spent</p>
-                  <strong>{money(recentTransactionSummary.expense)}</strong>
-                </article>
-                <article>
-                  <p className="muted">Added</p>
-                  <strong className="positive">{money(recentTransactionSummary.income)}</strong>
-                </article>
               </div>
               <div className="recent-tx-list">
                 {recentTransactions.length > 0 ? (
