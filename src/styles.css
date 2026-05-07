@@ -1086,7 +1086,8 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   margin: 0 auto;
   bottom: 0;
   width: min(430px, 100vw);
-  height: min(82dvh, 760px);
+  height: min(82svh, 760px);
+  max-height: calc(100svh - 8px);
   border-radius: 24px 24px 0 0;
   padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, #ffffffef 0%, #f4f7fcef 100%);
@@ -1097,6 +1098,13 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   display: flex;
   flex-direction: column;
   transform: translateZ(0);
+  overscroll-behavior: contain;
+}
+@supports not (height: 1svh) {
+  .ai-chat {
+    height: min(82vh, 760px);
+    max-height: calc(100vh - 8px);
+  }
 }
 .ai-chat::before {
   content: "";
@@ -1194,6 +1202,8 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   flex: 1;
   min-height: 220px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   display: grid;
   gap: 8px;
   padding: 4px;
