@@ -528,6 +528,19 @@ function App() {
     const endMinute = active.hour * 60 + Math.max(15, active.durationMinutes ?? 60);
     return { ...active, minutesLeft: Math.max(0, endMinute - minuteOfDay) };
   }, [sortedTimelineEvents, currentHour]);
+  const nextTimelineBlock = useMemo(() => {
+    const now = new Date();
+    const minuteOfDay = now.getHours() * 60 + now.getMinutes();
+    return sortedTimelineEvents.find((event) => event.hour * 60 > minuteOfDay) ?? null;
+  }, [sortedTimelineEvents, currentHour]);
+  const routinePlanHint = useMemo(() => {
+    if (routineTemplate.length === 0) return "Template not set";
+    if (nextTimelineBlock) {
+      const h = nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`;
+      return `Next: ${h} ${nextTimelineBlock.title}`;
+    }
+    return "No more blocks today";
+  }, [routineTemplate.length, nextTimelineBlock]);
   const routineHours = useMemo(() => Array.from({ length: 18 }, (_, i) => i + 6), []);
   const taskPriorityWeight: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
   const todayChecklist = useMemo(
@@ -622,6 +635,16 @@ function App() {
     const foodBudget = Math.max(2, (Math.max(0, todayRemaining) + inThreeDays) * 0.35);
     return { savePerDay, inThreeDays, foodBudget };
   }, [safePerDay, todayRemaining]);
+  const recentTransactions = useMemo(() => transactions.slice(0, 5), [transactions]);
+  const recentTransactionSummary = useMemo(() => {
+    const expense = recentTransactions.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+    const income = recentTransactions.filter((t) => t.type === "income").reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+    return {
+      count: recentTransactions.length,
+      expense,
+      income,
+    };
+  }, [recentTransactions]);
   const morningCoachBriefing = useMemo(() => {
     const preferredName = settings?.profileName?.trim() || "Guled Abdi";
     const greeting = currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : "Good evening";
@@ -1358,9 +1381,18 @@ function App() {
                   <span className="muted">daily save target</span>
                 </article>
                 <article className="briefing-item">
-                  <p className="muted">Bills (3d)</p>
-                  <strong>{dailyBriefing.nextBills}</strong>
-                  <span className="muted">{dailyBriefing.nextBills > 0 ? "due soon" : "nothing due"}</span>
+                  <p className="muted">Current block</p>
+                  <strong>{currentTimelineBlock?.title ?? "No activity scheduled"}</strong>
+                  <span className="muted">
+                    {currentTimelineBlock
+                      ? `${currentTimelineBlock.hour > 12 ? currentTimelineBlock.hour - 12 : currentTimelineBlock.hour}${currentTimelineBlock.hour >= 12 ? "pm" : "am"} • ${currentTimelineBlock.category}`
+                      : "Add a block to anchor this hour"}
+                  </span>
+                </article>
+                <article className="briefing-item routine">
+                  <p className="muted">Routine plan</p>
+                  <strong>{routineTemplate.length > 0 ? `${routineTemplate.length} template blocks` : "Set up your template"}</strong>
+                  <span className="muted">{routinePlanHint}</span>
                 </article>
               </div>
             </section>
@@ -1369,8 +1401,16 @@ function App() {
               <h3>Top numbers</h3>
               <p className="muted">Updated with every transaction</p>
             </div>
-            <section className="card main-card">
-              <p className="muted">Weekly Safe to Use</p>
+            <motion.section
+              className="card main-card finance-card finance-card-weekly"
+              whileHover={{ y: -4, scale: 1.01, rotateX: 1.4, rotateY: -1.4 }}
+              whileTap={{ scale: 0.985, y: -1 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+            >
+              <div className="credit-card-top">
+                <p className="muted">Weekly Safe to Use</p>
+                <span className="card-network">ZERO</span>
+              </div>
               <button type="button" className="amount-reveal-btn" onClick={() => setShowWeeklySafe((v) => !v)}>
                 <AnimatePresence mode="wait" initial={false}>
                   {showWeeklySafe ? (
@@ -1397,9 +1437,18 @@ function App() {
                   )}
                 </AnimatePresence>
               </button>
-              <p className="muted">{showWeeklySafe ? "Tap amount to hide" : "Tap amount to reveal"}</p>
-            </section>
-            <section className="credit-card">
+              <p className="muted finance-card-note">{showWeeklySafe ? "Tap amount to hide" : "Tap amount to reveal"}</p>
+              <div className="credit-card-bottom">
+                <span>Weekly limit</span>
+                <span>{budgetSnapshot.daysLeftInWeek}d left</span>
+              </div>
+            </motion.section>
+            <motion.section
+              className="credit-card finance-card finance-card-monthly"
+              whileHover={{ y: -4, scale: 1.01, rotateX: 1.2, rotateY: 1.2 }}
+              whileTap={{ scale: 0.985, y: -1 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+            >
               <div className="credit-card-top">
                 <p className="muted">Zero Card</p>
                 <span className="chip" aria-hidden="true" />
@@ -1431,7 +1480,12 @@ function App() {
                   )}
                 </AnimatePresence>
               </button>
-            </section>
+              <p className="muted finance-card-note">{showMonthlyBalance ? "Tap amount to hide" : "Tap amount to reveal"}</p>
+              <div className="credit-card-bottom">
+                <span>Cash-based</span>
+                <span>{budgetSnapshot.daysLeftInMonth}d left</span>
+              </div>
+            </motion.section>
 
             <div className="home-section-head">
               <h3>Weekly progress</h3>
@@ -1464,9 +1518,37 @@ function App() {
               <h3>Recent activity</h3>
               <p className="muted">Swipe to edit or delete</p>
             </div>
-            <section className="card">
-              <h3>Recent transactions</h3>
-              {transactions.slice(0, 5).map((t) => <TransactionRow key={t.id} tx={t} onDelete={() => deleteTransaction(t.id!)} onEdit={() => { setEditingTx(t); setShowTx(true); }} />)}
+            <section className="card recent-transactions-card">
+              <div className="recent-tx-head">
+                <div>
+                  <p className="home-kicker">Recent transactions</p>
+                  <h3>Latest money moves</h3>
+                </div>
+                <span className="recent-tx-count">{recentTransactionSummary.count} items</span>
+              </div>
+              <div className="recent-tx-stats">
+                <article>
+                  <p className="muted">Spent</p>
+                  <strong>{money(recentTransactionSummary.expense)}</strong>
+                </article>
+                <article>
+                  <p className="muted">Added</p>
+                  <strong className="positive">{money(recentTransactionSummary.income)}</strong>
+                </article>
+              </div>
+              <div className="recent-tx-list">
+                {recentTransactions.length > 0 ? (
+                  recentTransactions.map((t) => (
+                    <TransactionRow key={t.id} tx={t} onDelete={() => deleteTransaction(t.id!)} onEdit={() => { setEditingTx(t); setShowTx(true); }} />
+                  ))
+                ) : (
+                  <div className="recent-tx-empty">
+                    <strong>No transactions yet</strong>
+                    <p className="muted">Add your first entry to start tracking your real daily pace.</p>
+                    <button type="button" onClick={() => setShowTx(true)}>Add your first transaction</button>
+                  </div>
+                )}
+              </div>
             </section>
 
             <div className="home-section-head">

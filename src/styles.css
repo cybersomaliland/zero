@@ -950,6 +950,11 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   background: #eef5ff;
   border-color: #dce8ff;
 }
+.briefing-item.routine {
+  grid-column: 1 / -1;
+  background: #f1f6ff;
+  border-color: #d7e4ff;
+}
 .briefing-grid strong {
   font-size: 14px;
   line-height: 1.25;
@@ -1009,6 +1014,68 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 }
 .home-section-head .muted {
   font-size: 12px;
+}
+.recent-transactions-card {
+  border-radius: 22px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+  border: 1px solid #e2ebff;
+  box-shadow: 0 14px 28px #0f172818;
+  display: grid;
+  gap: 10px;
+}
+.recent-tx-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.recent-tx-head h3 {
+  margin: 2px 0 0;
+}
+.recent-tx-count {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0a84ff;
+  background: #e9f2ff;
+}
+.recent-tx-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.recent-tx-stats article {
+  border-radius: 12px;
+  border: 1px solid #e7eefb;
+  background: #f7f9fe;
+  padding: 10px;
+  display: grid;
+  gap: 2px;
+}
+.recent-tx-list {
+  border-radius: 14px;
+  border: 1px solid #e7eefb;
+  background: #ffffff;
+  padding: 0 10px;
+}
+.recent-tx-list .tx-row:last-child {
+  border-bottom: 0;
+}
+.recent-tx-empty {
+  border-radius: 12px;
+  padding: 12px 2px;
+  display: grid;
+  gap: 8px;
+}
+.recent-tx-empty strong {
+  font-size: 14px;
+}
+.recent-tx-empty p {
+  margin: 0;
+}
+.recent-tx-empty button {
+  width: fit-content;
 }
 .calendar-weekdays {
   display: grid;
@@ -1120,6 +1187,59 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .card { background: #fff; border-radius: 20px; padding: 14px; box-shadow: 0 10px 30px #0000000f; }
 .main-card { background: linear-gradient(145deg, #0a84ff, #216ef5); color: white; }
 .main-card .muted { color: #e7efff; }
+.finance-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 16px;
+  box-shadow: 0 16px 34px #0f14224a !important;
+  transform-style: preserve-3d;
+  will-change: transform;
+  cursor: pointer;
+}
+.finance-card::before {
+  content: "";
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  top: -88px;
+  right: -70px;
+  background: #ffffff40;
+  pointer-events: none;
+  animation: financeGlow 6s ease-in-out infinite;
+}
+.finance-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  border: 1px solid #ffffff30;
+  pointer-events: none;
+}
+@keyframes financeGlow {
+  0%, 100% { transform: translateX(0px) translateY(0px); opacity: 0.55; }
+  50% { transform: translateX(-10px) translateY(6px); opacity: 0.8; }
+}
+.card.finance-card-weekly {
+  background:
+    radial-gradient(circle at 15% 12%, #a8d8ff 0%, #6bb9ff 18%, #2d8cff 42%, #0a4fc7 100%),
+    linear-gradient(145deg, #5bc0ff, #0a4fc7) !important;
+  color: #fff !important;
+}
+.credit-card.finance-card-monthly {
+  background:
+    radial-gradient(circle at 20% 8%, #8b7a5a 0%, #5b4a34 24%, #2d313d 52%, #161a24 100%),
+    linear-gradient(150deg, #5f6675, #181c25) !important;
+  color: #fff !important;
+}
+.card-network {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #eef6ff;
+  text-shadow: 0 1px 8px #00000033;
+}
 .credit-card {
   border-radius: 24px;
   padding: 16px;
@@ -1136,8 +1256,12 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   box-shadow: inset 0 1px 0 #ffffff99;
 }
 .credit-card-balance-label { margin: 16px 0 0; color: #d8dbe2; font-size: 13px; }
-.credit-card-balance { margin: 4px 0 0; font-size: 32px; letter-spacing: -0.02em; }
+.credit-card-balance { margin: 4px 0 0; font-size: 34px; letter-spacing: -0.02em; }
 .credit-card-bottom { margin-top: 18px; display: flex; justify-content: space-between; color: #c6ccd8; font-size: 13px; }
+.finance-card-note {
+  margin-top: 4px;
+  color: #e9f0ff;
+}
 .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .inline-actions { display: flex; align-items: center; gap: 8px; }
 .row button, .sheet button { border: 0; border-radius: 14px; padding: 10px 14px; background: #0a84ff; color: white; cursor: pointer; transition: transform .15s; }
