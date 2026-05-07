@@ -2525,15 +2525,25 @@ function ReminderSheet({
 
 function TransactionRow({ tx, onDelete, onEdit }: { tx: any; onDelete: () => void; onEdit: () => void }) {
   const cat = getCategoryDefinition(tx.category || "General");
+  const txDateLabel = (() => {
+    const parsed = new Date(tx.date);
+    return Number.isNaN(+parsed) ? "Today" : format(parsed, "EEE d MMM");
+  })();
   return (
     <motion.div className="tx-row" drag="x" dragConstraints={{ left: 0, right: 0 }} onDragEnd={(_, info) => { if (info.offset.x < -80) onDelete(); if (info.offset.x > 80) onEdit(); }}>
-      <div>
-        <strong className="tx-category-badge" style={{ background: cat.color.bg, color: cat.color.text, boxShadow: `inset 0 0 0 1px ${cat.color.ring}` }}>
-          {tx.category}
-        </strong>
-        <p className="muted">{tx.note || "No note"}</p>
+      <div className="tx-row-main">
+        <div className="tx-row-top">
+          <strong className="tx-category-badge" style={{ background: cat.color.bg, color: cat.color.text, boxShadow: `inset 0 0 0 1px ${cat.color.ring}` }}>
+            {tx.category}
+          </strong>
+          <span className={`tx-type-pill ${tx.type}`}>{tx.type === "income" ? "Income" : "Expense"}</span>
+        </div>
+        <p className="muted tx-note">{tx.note || "No note"}</p>
+        <p className="muted tx-date">{txDateLabel}</p>
       </div>
-      <div className={tx.type === "income" ? "positive" : "negative"}>{money(tx.amount)}</div>
+      <div className="tx-row-right">
+        <strong className={tx.type === "income" ? "positive" : "negative"}>{money(tx.amount)}</strong>
+      </div>
     </motion.div>
   );
 }

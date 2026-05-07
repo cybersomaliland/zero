@@ -41,17 +41,21 @@ export function computeBudgetSnapshot(
   const todaySpent = transactions
     .filter((tx) => tx.type === "expense" && format(parseISO(tx.date), "yyyy-MM-dd") === todayKey)
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const transactionNetToDate = transactions
+    .filter((tx) => parseISO(tx.date) <= referenceDate)
+    .reduce((acc, tx) => acc + (tx.type === "income" ? Math.abs(tx.amount) : -Math.abs(tx.amount)), 0);
+  const liveCurrentBalance = settings.currentBalance + transactionNetToDate;
   const plannedIncomeRemaining = Math.max(0, settings.monthlySalary - monthIncomeToDate);
   // Treat currentBalance as the money basis the user entered in settings.
-  const monthlyRealBalance = settings.currentBalance - remainingMonthSubscriptions;
+  const monthlyRealBalance = liveCurrentBalance - remainingMonthSubscriptions;
   const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
-  const weeklySafeToUse = Math.max(0, (settings.currentBalance / daysLeftInMonth) * Math.min(daysLeftInWeek, daysLeftInMonth));
+  const weeklySafeToUse = Math.max(0, (liveCurrentBalance / daysLeftInMonth) * Math.min(daysLeftInWeek, daysLeftInMonth));
   const todayRemaining = dailyAllowance - todaySpent;
   const weeklySpent = transactions
-    .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }))
+    .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }) && parseISO(tx.date) <= referenceDate)
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
   const weeklyIncome = transactions
-    .filter((tx) => tx.type === "income" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }))
+    .filter((tx) => tx.type === "income" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }) && parseISO(tx.date) <= referenceDate)
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
   const weeklyUpcomingSubs = subscriptions.reduce((acc, sub) => {
     const due = parseISO(sub.nextBillingDate);
@@ -60,7 +64,7 @@ export function computeBudgetSnapshot(
   }, 0);
 
   return {
-    currentBalance: settings.currentBalance,
+    currentBalance: liveCurrentBalance,
     monthlyRealBalance,
     dailyAllowance,
     weeklySafeToUse,
