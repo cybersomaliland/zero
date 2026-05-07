@@ -21,30 +21,14 @@ function isSomalilandRelevant(item: { title: string; description: string; source
 export async function fetchSomalilandNews(signal?: AbortSignal): Promise<NewsItem[]> {
   try {
     const xRes = await fetch("/api/x-brief", { signal });
-    if (xRes.ok) {
-      const xData = await xRes.json() as { items?: NewsItem[] };
-      const xItems = (xData.items ?? [])
-        .map((item) => ({
-          title: item.title,
-          description: normalizeDescription(item.description),
-          url: item.url,
-          source: item.source || "X (Twitter)",
-          publishedAt: item.publishedAt,
-        }))
-        .filter(isSomalilandRelevant)
-        .slice(0, 3);
-      if (xItems.length > 0) return xItems;
-    }
-
-    const res = await fetch("/api/news-brief", { signal });
-    if (!res.ok) return [];
-    const data = await res.json() as { items?: NewsItem[] };
-    return (data.items ?? [])
+    if (!xRes.ok) return [];
+    const xData = await xRes.json() as { items?: NewsItem[] };
+    return (xData.items ?? [])
       .map((item) => ({
         title: item.title,
         description: normalizeDescription(item.description),
         url: item.url,
-        source: item.source || "Somaliland News",
+        source: item.source || "X (Twitter)",
         publishedAt: item.publishedAt,
       }))
       .filter(isSomalilandRelevant)

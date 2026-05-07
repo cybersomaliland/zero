@@ -121,52 +121,12 @@ app.get("/api/x-brief", async (req, res) => {
 });
 
 app.get("/api/news-brief", async (req, res) => {
-  const query = "Somaliland OR Hargeisa OR Berbera OR Borama";
-  const encodedQuery = encodeURIComponent(query);
-  const newsKey = process.env.NEWS_API_KEY || process.env.VITE_NEWS_API_KEY || FALLBACK_NEWS_KEY;
-  const attempts = [
-    async () => {
-      return fetchXBriefItems(X_QUERY_VARIANTS);
-    },
-    async () => {
-      const rssUrl = `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-US&gl=US&ceid=US:en`;
-      const response = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0 ZeroApp/1.0" } });
-      if (!response.ok) throw new Error(`Google News RSS failed: ${response.status}`);
-      const xml = await response.text();
-      return parseRssItems(xml)
-        .map((item) => ({ ...item, source: "Google News" }))
-        .filter(isSomalilandRelevant);
-    },
-    async () => {
-      const url = `https://api.thenewsapi.com/v1/news/top?api_token=${encodeURIComponent(newsKey)}&search=${encodedQuery}&language=en&limit=10`;
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`TheNewsAPI failed: ${response.status}`);
-      const data = await response.json();
-      return (data.data || [])
-        .filter((a) => a?.title && a?.url)
-        .map((a) => ({
-          title: a.title,
-          description: String(a.description || "No summary available."),
-          url: a.url,
-          source: a.source || "Somaliland News",
-          publishedAt: a.published_at,
-        }))
-        .filter(isSomalilandRelevant);
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const items = dedupeNews(await attempt());
-      if (items.length > 0) {
-        return res.status(200).json({ items: items.slice(0, 5) });
-      }
-    } catch {
-      // try next provider
-    }
+  try {
+    const items = dedupeNews(await fetchXBriefItems(X_QUERY_VARIANTS));
+    return res.status(200).json({ items: items.slice(0, 5) });
+  } catch {
+    return res.status(200).json({ items: [] });
   }
-
-  return res.status(200).json({ items: [] });
 });
 
 function serializePushError(error) {
