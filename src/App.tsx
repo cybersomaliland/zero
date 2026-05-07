@@ -64,6 +64,8 @@ function App() {
   const [showBulkTx, setShowBulkTx] = useState(false);
   const [showWeeklySafe, setShowWeeklySafe] = useState(false);
   const [showMonthlyBalance, setShowMonthlyBalance] = useState(false);
+  const [editingMonthlyReal, setEditingMonthlyReal] = useState(false);
+  const [monthlyRealDraft, setMonthlyRealDraft] = useState("");
   const [showAllowancePlanDetails, setShowAllowancePlanDetails] = useState(false);
   const [showAllowanceBillsDetails, setShowAllowanceBillsDetails] = useState(false);
   const [savingPulseDone, setSavingPulseDone] = useState(false);
@@ -644,6 +646,9 @@ function App() {
     if (todayRemaining < 0) return `You've gone ${money(Math.abs(todayRemaining))} over today. Keep tomorrow lighter.`;
     return `You're on track. ${money(todayRemaining)} left for today.`;
   }, [todaySpent, todayRemaining]);
+  useEffect(() => {
+    setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
+  }, [monthlyRealBalance]);
   const weeklyDueBills = useMemo(
     () => upcoming.filter((bill) => {
       const daysAway = differenceInCalendarDays(parseISO(bill.dueDate), startOfDay(new Date()));
@@ -1564,7 +1569,19 @@ function App() {
                 <p className="muted">Zero Card</p>
                 <span className="chip" aria-hidden="true" />
               </div>
-              <p className="credit-card-balance-label">Monthly real balance</p>
+              <div className="credit-card-balance-row">
+                <p className="credit-card-balance-label">Monthly real balance</p>
+                <button
+                  type="button"
+                  className="credit-card-edit-btn"
+                  onClick={() => {
+                    setEditingMonthlyReal((v) => !v);
+                    setShowMonthlyBalance(true);
+                  }}
+                >
+                  {editingMonthlyReal ? "Close" : "Edit"}
+                </button>
+              </div>
               <button type="button" className="credit-card-balance amount-reveal-btn" onClick={() => setShowMonthlyBalance((v) => !v)}>
                 <AnimatePresence mode="wait" initial={false}>
                   {showMonthlyBalance ? (
@@ -1591,6 +1608,28 @@ function App() {
                   )}
                 </AnimatePresence>
               </button>
+              {editingMonthlyReal && (
+                <form
+                  className="credit-card-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const desiredMonthlyReal = Number(monthlyRealDraft);
+                    if (!Number.isFinite(desiredMonthlyReal)) return;
+                    const targetCurrentBalance = desiredMonthlyReal + budgetSnapshot.remainingMonthSubscriptions;
+                    void updateSettings({ currentBalance: Number(targetCurrentBalance.toFixed(2)) });
+                    setEditingMonthlyReal(false);
+                  }}
+                >
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={monthlyRealDraft}
+                    onChange={(e) => setMonthlyRealDraft(e.target.value)}
+                    placeholder="Set monthly real balance"
+                  />
+                  <button type="submit">Save</button>
+                </form>
+              )}
               <p className="muted finance-card-note">{showMonthlyBalance ? "Tap amount to hide" : "Tap amount to reveal"}</p>
               <div className="credit-card-bottom">
                 <span>Cash-based</span>

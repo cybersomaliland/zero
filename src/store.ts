@@ -3,6 +3,8 @@ import { db, seedIfEmpty } from "./db";
 import { inferCategory } from "./logic";
 import type { Settings, Subscription, Transaction } from "./types";
 
+const signedTxAmount = (tx: Pick<Transaction, "type" | "amount">) => (tx.type === "income" ? 1 : -1) * Math.abs(Number(tx.amount) || 0);
+
 type State = {
   loading: boolean;
   transactions: Transaction[];
@@ -50,14 +52,36 @@ export const useZeroStore = create<State>((set, get) => ({
       createdAt: new Date().toISOString(),
     };
     await db.transactions.add(tx);
+    const settings = await db.settings.get(1);
+    if (settings) {
+      await db.settings.put({ ...settings, currentBalance: settings.currentBalance + signedTxAmount(tx), id: 1 });
+    }
     await get().init();
   },
   updateTransaction: async (id, t) => {
+    const prev = await db.transactions.get(id);
     await db.transactions.update(id, t);
+    if (prev) {
+      const settings = await db.settings.get(1);
+      if (settings) {
+        const nextTx = { ...prev, ...t };
+        const delta = signedTxAmount(nextTx) - signedTxAmount(prev);
+        if (delta !== 0) {
+          await db.settings.put({ ...settings, currentBalance: settings.currentBalance + delta, id: 1 });
+        }
+      }
+    }
     await get().init();
   },
   deleteTransaction: async (id) => {
+    const prev = await db.transactions.get(id);
     await db.transactions.delete(id);
+    if (prev) {
+      const settings = await db.settings.get(1);
+      if (settings) {
+        await db.settings.put({ ...settings, currentBalance: settings.currentBalance - signedTxAmount(prev), id: 1 });
+      }
+    }
     await get().init();
   },
   addSubscription: async (s) => {
@@ -83,6 +107,11 @@ export const useZeroStore = create<State>((set, get) => ({
     });
     if (prepared.length > 0) {
       await db.transactions.bulkAdd(prepared);
+      const settings = await db.settings.get(1);
+      if (settings) {
+        const delta = prepared.reduce((sum, tx) => sum + signedTxAmount(tx), 0);
+        await db.settings.put({ ...settings, currentBalance: settings.currentBalance + delta, id: 1 });
+      }
     }
     await get().init();
   },
