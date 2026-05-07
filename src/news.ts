@@ -23,16 +23,16 @@ export async function fetchSomalilandNews(signal?: AbortSignal): Promise<NewsIte
     const xRes = await fetch("/api/x-brief", { signal });
     if (!xRes.ok) return [];
     const xData = await xRes.json() as { items?: NewsItem[] };
-    return (xData.items ?? [])
+    const normalized = (xData.items ?? [])
       .map((item) => ({
         title: item.title,
         description: normalizeDescription(item.description),
         url: item.url,
         source: item.source || "X (Twitter)",
         publishedAt: item.publishedAt,
-      }))
-      .filter(isSomalilandRelevant)
-      .slice(0, 3);
+      }));
+    const relevant = normalized.filter(isSomalilandRelevant);
+    return (relevant.length > 0 ? relevant : normalized).slice(0, 3);
   } catch {
     return [];
   }

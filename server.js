@@ -99,6 +99,7 @@ function dedupeNews(items) {
 
 async function fetchXBriefItems(queries) {
   const collected = [];
+  const relevant = [];
   for (const query of queries) {
     const encodedQuery = encodeURIComponent(query);
     for (const base of NITTER_RSS_SOURCES) {
@@ -109,19 +110,22 @@ async function fetchXBriefItems(queries) {
         });
         if (!response.ok) continue;
         const xml = await response.text();
-        const items = parseRssItems(xml)
-          .map((item) => ({ ...item, source: "X (Twitter)" }))
-          .filter(isSomalilandRelevant);
+        const items = parseRssItems(xml).map((item) => ({ ...item, source: "X (Twitter)" }));
+        const topical = items.filter(isSomalilandRelevant);
+        relevant.push(...topical);
         collected.push(...items);
-        if (collected.length >= 8) {
-          return dedupeNews(collected);
+        if (relevant.length >= 5) {
+          return dedupeNews(relevant);
+        }
+        if (collected.length >= 12) {
+          return dedupeNews(relevant.length > 0 ? relevant : collected);
         }
       } catch {
         // continue with next mirror
       }
     }
   }
-  return dedupeNews(collected);
+  return dedupeNews(relevant.length > 0 ? relevant : collected);
 }
 
 app.get("/api/x-brief", async (req, res) => {
