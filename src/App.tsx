@@ -289,6 +289,8 @@ function App() {
         weeklySpent: 0,
         weeklyIncome: 0,
         weeklyUpcomingSubs: 0,
+        daysInMonth: 1,
+        daysLeftInWeek: 1,
         daysLeftInMonth: 1,
         monthIncomeToDate: 0,
         monthExpenseToDate: 0,
@@ -1367,9 +1369,10 @@ function App() {
               <div className="settings-formula">
                 <p className="muted">Weekly safe (from monthly real balance): {money(weeklySafeToUse)}</p>
                 <p className="muted">
-                  Monthly real balance: {money(realBalance)} - {money(budgetSnapshot.remainingMonthSubscriptions)} - {money(settings.reservedSavings)}
+                  Monthly real balance: {money(realBalance)} - {money(budgetSnapshot.remainingMonthSubscriptions)}
                 </p>
                 <p className="muted">Income this month: {money(budgetSnapshot.monthIncomeToDate)} of {money(monthlySalary)} planned.</p>
+                <p className="muted">Week starts Saturday. {budgetSnapshot.daysLeftInWeek} day(s) left this week, {budgetSnapshot.daysLeftInMonth} day(s) left this month.</p>
               </div>
             </section>
 

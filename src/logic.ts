@@ -1,6 +1,8 @@
-import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, endOfMonth, endOfWeek, format, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
+import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, endOfMonth, endOfWeek, format, getDaysInMonth, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
 import { inferCategoryFromText } from "./categories";
 import type { Settings, Subscription, Transaction } from "./types";
+
+const WEEK_STARTS_ON = 6; // Saturday
 
 export const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
@@ -16,8 +18,10 @@ export function computeBudgetSnapshot(
   const nowDay = startOfDay(referenceDate);
   const monthKey = format(referenceDate, "yyyy-MM");
   const monthEnd = endOfMonth(referenceDate);
+  const daysInMonth = Math.max(1, getDaysInMonth(referenceDate));
   const daysLeftInMonth = Math.max(1, differenceInCalendarDays(monthEnd, nowDay) + 1);
-  const daysLeftInWeek = Math.max(1, differenceInCalendarDays(endOfWeek(referenceDate, { weekStartsOn: 1 }), nowDay) + 1);
+  const weekEnd = endOfWeek(referenceDate, { weekStartsOn: WEEK_STARTS_ON });
+  const daysLeftInWeek = Math.max(1, differenceInCalendarDays(weekEnd, nowDay) + 1);
 
   const monthTransactions = transactions.filter((tx) => format(parseISO(tx.date), "yyyy-MM") === monthKey);
   const monthIncomeToDate = monthTransactions
@@ -33,28 +37,26 @@ export function computeBudgetSnapshot(
     return acc + sub.amount;
   }, 0);
 
-  const plannedIncomeRemaining = Math.max(0, settings.monthlySalary - monthIncomeToDate);
-  // Keep budget math cash-based: currentBalance already reflects realized money.
-  // Adding planned income here can inflate all derived balances.
-  const monthlyRealBalance = settings.currentBalance - remainingMonthSubscriptions - settings.reservedSavings;
-  const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
-  const weeklySafeToUse = Math.max(0, dailyAllowance * Math.min(daysLeftInWeek, daysLeftInMonth));
-
   const todayKey = format(referenceDate, "yyyy-MM-dd");
   const todaySpent = transactions
     .filter((tx) => tx.type === "expense" && format(parseISO(tx.date), "yyyy-MM-dd") === todayKey)
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const plannedIncomeRemaining = Math.max(0, settings.monthlySalary - monthIncomeToDate);
+  // Treat currentBalance as the money basis the user entered in settings.
+  const monthlyRealBalance = settings.currentBalance - remainingMonthSubscriptions;
+  const dailyAllowance = Math.max(0, monthlyRealBalance / daysLeftInMonth);
+  const weeklySafeToUse = Math.max(0, dailyAllowance * Math.min(daysLeftInWeek, daysLeftInMonth));
   const todayRemaining = dailyAllowance - todaySpent;
   const weeklySpent = transactions
-    .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: 1 }))
+    .filter((tx) => tx.type === "expense" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }))
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
   const weeklyIncome = transactions
-    .filter((tx) => tx.type === "income" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: 1 }))
+    .filter((tx) => tx.type === "income" && isSameWeek(parseISO(tx.date), referenceDate, { weekStartsOn: WEEK_STARTS_ON }))
     .reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
   const weeklyUpcomingSubs = subscriptions.reduce((acc, sub) => {
     const due = parseISO(sub.nextBillingDate);
-    const days = differenceInCalendarDays(due, referenceDate);
-    return days >= 0 && days <= 7 ? acc + sub.amount : acc;
+    const days = differenceInCalendarDays(due, nowDay);
+    return days >= 0 && days <= daysLeftInWeek ? acc + sub.amount : acc;
   }, 0);
 
   return {
@@ -67,6 +69,8 @@ export function computeBudgetSnapshot(
     weeklySpent,
     weeklyIncome,
     weeklyUpcomingSubs,
+    daysInMonth,
+    daysLeftInWeek,
     daysLeftInMonth,
     monthIncomeToDate,
     monthExpenseToDate,
