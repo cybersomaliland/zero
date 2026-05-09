@@ -1,11 +1,13 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth } from "date-fns";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth, startOfWeek, subWeeks } from "date-fns";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
-import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money } from "./logic";
+import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money, simulateWhatIfScenario } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
+import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
+import { StructuredDayTimeline } from "./StructuredDayTimeline";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
@@ -24,7 +26,28 @@ const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
 type ThemePreference = "system" | "light" | "dark";
-type TimelineEvent = { id: number; title: string; hour: number; category: TimelineCategory; durationMinutes?: number };
+type TimelineEvent = {
+  id: number;
+  title: string;
+  hour: number;
+  startMinute?: number;
+  category: TimelineCategory;
+  durationMinutes?: number;
+  subtasks?: string[];
+  /** yyyy-MM-dd; omit only for legacy rows—treated as “today” when matching the current calendar day. */
+  date?: string;
+};
+
+function timelineStartMinutes(e: Pick<TimelineEvent, "hour" | "startMinute">) {
+  return e.hour * 60 + (e.startMinute ?? 0);
+}
+
+function formatTimelineClock(e: Pick<TimelineEvent, "hour" | "startMinute">) {
+  const d = new Date();
+  const m = timelineStartMinutes(e);
+  d.setHours(Math.floor(m / 60), m % 60, 0, 0);
+  return format(d, "h:mm a");
+}
 type RoutineTemplateBlock = { id: number; name: string; hour: number; durationMinutes: number; category: TimelineCategory };
 type PlanAheadItem = { id?: number; date: string; title: string; hour: number; category: TimelineCategory; createdAt: string };
 type RoutineReminderItem = {
@@ -44,6 +67,16 @@ type RoutineDaySnapshot = {
   dayRating: 1 | 2 | 3 | 4 | 5 | null;
 };
 type MealGroup = "Breakfast" | "Lunch" | "Dinner" | "Snacks";
+type WhatIfScenarioRecord = {
+  id: number;
+  prompt: string;
+  title: string;
+  changes: string[];
+  currentMonthEnd: number;
+  simulatedMonthEnd: number;
+  totalSavings: number;
+  createdAt: string;
+};
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -80,6 +113,20 @@ function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [assistantEngineReason, setAssistantEngineReason] = useState("");
+  const [showWhatIfBuilder, setShowWhatIfBuilder] = useState(false);
+  const [whatIfCutCategory, setWhatIfCutCategory] = useState("food");
+  const [whatIfCutPercent, setWhatIfCutPercent] = useState(15);
+  const [whatIfCancelSubscriptionId, setWhatIfCancelSubscriptionId] = useState<number | null>(null);
+  const [whatIfScenarios, setWhatIfScenarios] = useState<WhatIfScenarioRecord[]>(() => {
+    try {
+      const raw = localStorage.getItem("zero_what_if_scenarios_v1");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as WhatIfScenarioRecord[];
+      return Array.isArray(parsed) ? parsed.slice(0, 12) : [];
+    } catch {
+      return [];
+    }
+  });
   const [showMorningBriefing, setShowMorningBriefing] = useState(false);
   const [morningQuestion, setMorningQuestion] = useState("");
   const [ritualReview, setRitualReview] = useState("");
@@ -112,7 +159,7 @@ function App() {
   const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [dayClosed, setDayClosed] = useState(false);
   const [routineHydrated, setRoutineHydrated] = useState(false);
-  const [, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
+  const [routineHistory, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
   const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [liveNow, setLiveNow] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
@@ -337,6 +384,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem("zero_ai_chat_v1", JSON.stringify(chat));
   }, [chat]);
+  useEffect(() => {
+    localStorage.setItem("zero_what_if_scenarios_v1", JSON.stringify(whatIfScenarios.slice(0, 12)));
+  }, [whatIfScenarios]);
 
   useEffect(() => {
     if (!assistantOpen) return;
@@ -470,33 +520,35 @@ function App() {
     return streak;
   }, [transactions]);
   const sortedTimelineEvents = useMemo(() => {
-    const copy = [...timelineEvents];
-    copy.sort((a, b) => timelineSortAsc ? a.hour - b.hour : b.hour - a.hour);
+    const tk = format(liveNow, "yyyy-MM-dd");
+    const copy = timelineEvents.filter((e) => (e.date ?? tk) === tk);
+    copy.sort((a, b) =>
+      timelineSortAsc ? timelineStartMinutes(a) - timelineStartMinutes(b) : timelineStartMinutes(b) - timelineStartMinutes(a),
+    );
     return copy;
-  }, [timelineEvents, timelineSortAsc]);
+  }, [timelineEvents, timelineSortAsc, liveNow]);
   const currentTimelineBlock = useMemo(() => {
     const now = new Date();
     const minuteOfDay = now.getHours() * 60 + now.getMinutes();
     const active = sortedTimelineEvents.find((event) => {
-      const start = event.hour * 60;
+      const start = timelineStartMinutes(event);
       const duration = Math.max(15, event.durationMinutes ?? 60);
       return minuteOfDay >= start && minuteOfDay < start + duration;
     });
     if (!active) return null;
-    const endMinute = active.hour * 60 + Math.max(15, active.durationMinutes ?? 60);
+    const endMinute = timelineStartMinutes(active) + Math.max(15, active.durationMinutes ?? 60);
     return { ...active, minutesLeft: Math.max(0, endMinute - minuteOfDay) };
   }, [sortedTimelineEvents, currentHour]);
   const nextTimelineBlock = useMemo(() => {
     const now = new Date();
     const minuteOfDay = now.getHours() * 60 + now.getMinutes();
-    return sortedTimelineEvents.find((event) => event.hour * 60 > minuteOfDay) ?? null;
+    return sortedTimelineEvents.find((event) => timelineStartMinutes(event) > minuteOfDay) ?? null;
   }, [sortedTimelineEvents, currentHour]);
   const nextTimelineBlockEtaMinutes = useMemo(() => {
     if (!nextTimelineBlock) return 0;
     const nowMinute = liveNow.getHours() * 60 + liveNow.getMinutes();
-    return Math.max(0, nextTimelineBlock.hour * 60 - nowMinute);
+    return Math.max(0, timelineStartMinutes(nextTimelineBlock) - nowMinute);
   }, [nextTimelineBlock, liveNow]);
-  const routineHours = useMemo(() => Array.from({ length: 18 }, (_, i) => i + 6), []);
   const taskPriorityWeight: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
   const todayChecklist = useMemo(
     () => [...tasks].sort((a, b) => taskPriorityWeight[a.priority] - taskPriorityWeight[b.priority]),
@@ -590,6 +642,106 @@ function App() {
     if (todayRemaining < 0) return `You've gone ${money(Math.abs(todayRemaining))} over today. Keep tomorrow lighter.`;
     return `You're on track. ${money(todayRemaining)} left for today.`;
   }, [todaySpent, todayRemaining]);
+  const weeklyReviewReport = useMemo(() => {
+    const weekStartsOn = 6; // Saturday
+    const now = new Date();
+    const thisWeekStart = startOfWeek(now, { weekStartsOn });
+    const thisWeekEnd = endOfWeek(now, { weekStartsOn });
+    const prevWeekStart = subWeeks(thisWeekStart, 1);
+    const prevWeekEnd = subWeeks(thisWeekEnd, 1);
+    const inRange = (iso: string, start: Date, end: Date) => {
+      const d = parseISO(iso);
+      return d >= startOfDay(start) && d <= end;
+    };
+    const thisWeekTx = transactions.filter((tx) => inRange(tx.date, thisWeekStart, thisWeekEnd));
+    const prevWeekTx = transactions.filter((tx) => inRange(tx.date, prevWeekStart, prevWeekEnd));
+    const totals = (txs: typeof transactions) => ({
+      spent: txs.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(t.amount), 0),
+      income: txs.filter((t) => t.type === "income").reduce((sum, t) => sum + Math.abs(t.amount), 0),
+    });
+    const thisTotals = totals(thisWeekTx);
+    const prevTotals = totals(prevWeekTx);
+    const thisTopCategory = Object.entries(
+      thisWeekTx
+        .filter((t) => t.type === "expense")
+        .reduce<Record<string, number>>((acc, t) => {
+          acc[t.category] = (acc[t.category] || 0) + Math.abs(t.amount);
+          return acc;
+        }, {}),
+    ).sort((a, b) => b[1] - a[1])[0];
+
+    const snapshots = Object.entries(routineHistory)
+      .map(([day, snapshot]) => ({ day, snapshot }))
+      .filter(({ day }) => {
+        const d = parseISO(day);
+        return !Number.isNaN(+d);
+      });
+    const thisWeekSnaps = snapshots.filter(({ day }) => inRange(day, thisWeekStart, thisWeekEnd));
+    const prevWeekSnaps = snapshots.filter(({ day }) => inRange(day, prevWeekStart, prevWeekEnd));
+    const completionAvg = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
+      const ratios = items
+        .map(({ snapshot }) => {
+          const total = snapshot.tasks.length;
+          if (total === 0) return null;
+          const done = snapshot.tasks.filter((t) => t.done).length;
+          return done / total;
+        })
+        .filter((v): v is number => v !== null);
+      if (ratios.length === 0) return 0;
+      return ratios.reduce((sum, v) => sum + v, 0) / ratios.length;
+    };
+    const ratingAvg = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
+      const ratings = items.reduce<number[]>((acc, { snapshot }) => {
+        if (typeof snapshot.dayRating === "number") acc.push(snapshot.dayRating);
+        return acc;
+      }, []);
+      if (ratings.length === 0) return 0;
+      return ratings.reduce((sum, v) => sum + v, 0) / ratings.length;
+    };
+    const thisCompletion = completionAvg(thisWeekSnaps);
+    const prevCompletion = completionAvg(prevWeekSnaps);
+    const thisRating = ratingAvg(thisWeekSnaps);
+    const prevRating = ratingAvg(prevWeekSnaps);
+
+    const happened: string[] = [
+      `Money: spent ${money(thisTotals.spent)} and recorded ${money(thisTotals.income)} income this week.`,
+      `Routine: logged ${thisWeekSnaps.length} day snapshot(s), with avg day score ${thisRating > 0 ? thisRating.toFixed(1) : "n/a"}/5.`,
+      `Tasks: average completion was ${Math.round(thisCompletion * 100)}% across days with tasks.`,
+    ];
+    if (thisTopCategory) happened.push(`Top spending category: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).`);
+
+    const improved: string[] = [];
+    if (prevTotals.spent > 0 && thisTotals.spent < prevTotals.spent) {
+      improved.push(`Money improved: weekly spending dropped by ${money(prevTotals.spent - thisTotals.spent)}.`);
+    }
+    if (thisCompletion > prevCompletion) {
+      improved.push(`Task rhythm improved: completion rose from ${Math.round(prevCompletion * 100)}% to ${Math.round(thisCompletion * 100)}%.`);
+    }
+    if (thisRating > prevRating && prevRating > 0) {
+      improved.push(`Routine quality improved: day score moved from ${prevRating.toFixed(1)} to ${thisRating.toFixed(1)}.`);
+    }
+    if (improved.length === 0) {
+      improved.push("Consistency held steady. Keep the same structure and tighten one small habit next week.");
+    }
+
+    const next: string[] = [];
+    if (thisTotals.spent > thisTotals.income && thisTotals.income > 0) {
+      next.push(`Money: keep next week spending below ${money(thisTotals.income)} (your recorded income baseline).`);
+    } else {
+      next.push(`Money: protect a weekly cap around ${money(Math.max(0, thisTotals.spent * 0.9 || safePerDay * 7))}.`);
+    }
+    if (thisTopCategory) {
+      next.push(`Spending focus: reduce ${thisTopCategory[0]} by 10-15% with a simple category cap.`);
+    }
+    next.push(`Routine/tasks: lock one non-negotiable morning block and aim for ${Math.max(70, Math.round(thisCompletion * 100))}%+ task completion.`);
+
+    return {
+      title: `Week review (${format(thisWeekStart, "MMM d")} - ${format(thisWeekEnd, "MMM d")})`,
+      happened,
+      improved,
+      next,
+    };
+  }, [transactions, routineHistory, safePerDay]);
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
@@ -665,113 +817,84 @@ function App() {
       .sort((a, b) => a.dueMs - b.dueMs)[0] ?? null,
     [upcoming, liveNow],
   );
-  const liveCards = useMemo(() => {
-    const cards: Array<{ priority: number; node: ReactNode }> = [];
-
-    cards.push({
-      priority: 2,
-      node: (
-        <article className="card live-card" key="now">
-          <p className="live-label">NOW</p>
-          {currentTimelineBlock ? (
-            <>
-              <h3>{currentTimelineBlock.title}</h3>
-              <p className="muted">{currentTimelineBlock.category.toUpperCase()} · ends in {currentTimelineBlock.minutesLeft} min</p>
-            </>
-          ) : (
-            <p className="muted">Nothing scheduled <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
-          )}
-        </article>
-      ),
-    });
-
-    cards.push({
-      priority: 3,
-      node: (
-        <article className="card live-card" key="next">
-          <p className="live-label">NEXT</p>
-          {nextTimelineBlock ? (
-            <>
-              <h3>{nextTimelineBlock.title}</h3>
-              <p className="muted">
-                {nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`} · in {nextTimelineBlockEtaMinutes} min
-              </p>
-            </>
-          ) : (
-            <p className="muted">Free for the rest of the day</p>
-          )}
-        </article>
-      ),
-    });
-
-    cards.push({
-      priority: 4,
-      node: (
-        <article className="card live-card" key="tasks">
-          <p className="live-label">TASKS</p>
-          {topOpenTasks.length > 0 ? (
-            <>
-              {topOpenTasks.map((task) => (
-                <p key={task.id} className="live-task-line">
-                  <span>{task.title}</span>
-                  <span className={`priority-dot ${task.priority}`} />
-                </p>
-              ))}
-              {openTasksSorted.length > 2 && <p className="muted">{openTasksSorted.length - 2} more tasks</p>}
-            </>
-          ) : (
-            <p className="muted">Nothing on your list <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
-          )}
-        </article>
-      ),
-    });
-
-    cards.push({
-      priority: todayRemaining < 0 ? 1 : 5,
-      node: (
-        <article className="card live-card live-money-card" key="money">
-          <p className="live-label">MONEY</p>
-          <h3>{money(todayRemaining)} left today</h3>
-          <p className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</p>
-        </article>
-      ),
-    });
-
-    if (savePlan.savePerDay > 0) {
-      cards.push({
-        priority: 6,
-        node: (
-          <article className="card live-card" key="savings">
-            <p className="live-label">SAVINGS PULSE</p>
-            <button type="button" className="savings-pulse-row" onClick={() => setSavingPulseDone((v) => !v)}>
-              <span>Save {money(savePlan.savePerDay)} today</span>
-              <span className={`pulse-toggle ${savingPulseDone ? "done" : ""}`}>{savingPulseDone ? "✓" : ""}</span>
-            </button>
-          </article>
-        ),
-      });
-    }
-
-    if (next48HourBill) {
-      const warningLabel = next48HourBill.diffHours < 0
+  const liveOverview = useMemo(() => {
+    const warningLabel = next48HourBill
+      ? (next48HourBill.diffHours < 0
         ? "overdue"
         : next48HourBill.diffHours <= 24
           ? "due tomorrow"
-          : "due soon";
-      cards.push({
-        priority: next48HourBill.diffHours < 0 ? 0 : 2,
-        node: (
-          <article className="card live-card" key="bills">
-            <p className="live-label">BILLS</p>
-            <button type="button" className="bill-alert-row" onClick={() => setTab("Subscriptions")}>
+          : "due soon")
+      : "";
+    return (
+      <section className="card live-overview-card">
+        <div className="live-overview-head">
+          <p className="live-label">LIVE OVERVIEW</p>
+          <span className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</span>
+        </div>
+        <div className="live-overview-grid">
+          <article className="live-overview-tile">
+            <p className="live-label">NOW</p>
+            {currentTimelineBlock ? (
+              <>
+                <h3>{currentTimelineBlock.title}</h3>
+                <p className="muted">{currentTimelineBlock.category.toUpperCase()} · ends in {currentTimelineBlock.minutesLeft} min</p>
+              </>
+            ) : (
+              <p className="muted">Nothing scheduled <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
+            )}
+          </article>
+          <article className="live-overview-tile">
+            <p className="live-label">NEXT</p>
+            {nextTimelineBlock ? (
+              <>
+                <h3>{nextTimelineBlock.title}</h3>
+                <p className="muted">
+                  {nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`} · in {nextTimelineBlockEtaMinutes} min
+                </p>
+              </>
+            ) : (
+              <p className="muted">Free for the rest of the day</p>
+            )}
+          </article>
+          <article className="live-overview-tile">
+            <p className="live-label">TASKS</p>
+            {topOpenTasks.length > 0 ? (
+              <>
+                {topOpenTasks.map((task) => (
+                  <p key={task.id} className="live-task-line">
+                    <span>{task.title}</span>
+                    <span className={`priority-dot ${task.priority}`} />
+                  </p>
+                ))}
+                {openTasksSorted.length > 2 && <p className="muted">{openTasksSorted.length - 2} more tasks</p>}
+              </>
+            ) : (
+              <p className="muted">Nothing on your list <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
+            )}
+          </article>
+          <article className="live-overview-tile live-overview-money">
+            <p className="live-label">MONEY</p>
+            <h3>{money(todayRemaining)} left today</h3>
+            <p className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</p>
+          </article>
+        </div>
+        <div className="live-overview-foot">
+          {savePlan.savePerDay > 0 && (
+            <button type="button" className="savings-pulse-row live-overview-action" onClick={() => setSavingPulseDone((v) => !v)}>
+              <span className="live-label">SAVINGS PULSE</span>
+              <span>Save {money(savePlan.savePerDay)} today</span>
+              <span className={`pulse-toggle ${savingPulseDone ? "done" : ""}`}>{savingPulseDone ? "✓" : ""}</span>
+            </button>
+          )}
+          {next48HourBill && (
+            <button type="button" className="bill-alert-row live-overview-action" onClick={() => setTab("Subscriptions")}>
+              <span className="live-label">BILLS</span>
               <span>⚠ {next48HourBill.name} {warningLabel}</span>
             </button>
-          </article>
-        ),
-      });
-    }
-
-    return cards.sort((a, b) => a.priority - b.priority).map((entry) => entry.node);
+          )}
+        </div>
+      </section>
+    );
   }, [
     currentTimelineBlock,
     nextTimelineBlock,
@@ -917,7 +1040,7 @@ function App() {
           tasksCount: tasks.filter((t) => !t.done).length,
           amount: todayRemaining,
           block: nextTimelineBlock?.title || currentTimelineBlock?.title || "Focus",
-          time: nextTimelineBlock ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`) : "9:00",
+          time: nextTimelineBlock ? formatTimelineClock(nextTimelineBlock) : "9:00 AM",
         }),
       });
       if (response.ok) {
@@ -947,7 +1070,7 @@ function App() {
           tasksCount: tasks.filter((t) => !t.done).length,
           amount: todayRemaining,
           block: nextTimelineBlock?.title || currentTimelineBlock?.title || "Focus",
-          time: nextTimelineBlock ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`) : "9:00",
+          time: nextTimelineBlock ? formatTimelineClock(nextTimelineBlock) : "9:00 AM",
         },
         delayMs: delaySec * 1000,
       }),
@@ -963,14 +1086,16 @@ function App() {
   };
   const applyTemplateToToday = () => {
     if (routineTemplate.length === 0) return;
+    const tk = format(new Date(), "yyyy-MM-dd");
     const mapped: TimelineEvent[] = routineTemplate.map((block) => ({
       id: Date.now() + Math.floor(Math.random() * 1000) + block.id,
       title: block.name,
       hour: block.hour,
       durationMinutes: block.durationMinutes,
       category: block.category,
+      date: tk,
     }));
-    setTimelineEvents(mapped.sort((a, b) => a.hour - b.hour));
+    setTimelineEvents(mapped.sort((a, b) => timelineStartMinutes(a) - timelineStartMinutes(b)));
   };
   const savePlanAheadItem = async (item: PlanAheadItem) => {
     if (item.id) {
@@ -1148,6 +1273,29 @@ function App() {
   const askAssistant = async (question: string) => {
     if (!question.trim() || !settings) return;
     const text = question.trim();
+    const scenarioPreview = simulateWhatIfScenario(text, transactions, subscriptions, settings);
+    const recentScenarioContext = whatIfScenarios
+      .slice(0, 3)
+      .map((s) => `${s.title}: month-end ${money(s.simulatedMonthEnd)} vs baseline ${money(s.currentMonthEnd)}.`)
+      .join("\n");
+    const enrichedQuestion = scenarioPreview
+      ? `${text}\n\nWhat-if simulator baseline:\n${scenarioPreview.baseline.changes.join("\n")}\nProjected month-end: ${money(scenarioPreview.baseline.simulatedMonthEnd)} (current path ${money(scenarioPreview.baseline.currentMonthEnd)}).\n${recentScenarioContext ? `\nRecent scenarios:\n${recentScenarioContext}` : ""}`
+      : `${text}${recentScenarioContext ? `\n\nRecent scenarios:\n${recentScenarioContext}` : ""}`;
+    if (scenarioPreview) {
+      setWhatIfScenarios((prev) => [
+        {
+          id: Date.now(),
+          prompt: text,
+          title: text.length > 56 ? `${text.slice(0, 56)}...` : text,
+          changes: scenarioPreview.baseline.changes,
+          currentMonthEnd: scenarioPreview.baseline.currentMonthEnd,
+          simulatedMonthEnd: scenarioPreview.baseline.simulatedMonthEnd,
+          totalSavings: scenarioPreview.baseline.totalSavings,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev,
+      ].slice(0, 12));
+    }
     const historyBeforeQuestion = [...chat].slice(-10) as Array<{ role: "assistant" | "user"; text: string }>;
     const nextHistory = [...historyBeforeQuestion, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
     setChat(nextHistory);
@@ -1157,7 +1305,7 @@ function App() {
       let streamedAnswer = "";
       let streamMounted = false;
       const answer = await askGroqFinanceAssistant({
-        question: text,
+        question: enrichedQuestion,
         chatHistory: historyBeforeQuestion,
         transactions,
         subscriptions,
@@ -1185,7 +1333,9 @@ function App() {
             }
             : null,
           todayTimeline: sortedTimelineEvents.map((e) => ({
+            date: e.date,
             hour: e.hour,
+            startMinute: e.startMinute,
             title: e.title,
             category: e.category,
             durationMinutes: e.durationMinutes,
@@ -1260,6 +1410,19 @@ function App() {
       setAssistantBusy(false);
     }
   };
+  const selectedWhatIfSubscription = useMemo(
+    () => subscriptions.find((s) => s.id === whatIfCancelSubscriptionId) ?? null,
+    [subscriptions, whatIfCancelSubscriptionId],
+  );
+  const builderScenarioQuestion = useMemo(() => {
+    const cut = `What if I cut ${whatIfCutCategory} by ${Math.max(1, Math.min(80, Math.round(whatIfCutPercent)))}%`;
+    if (selectedWhatIfSubscription) return `${cut} and cancel ${selectedWhatIfSubscription.name}?`;
+    return `${cut}?`;
+  }, [whatIfCutCategory, whatIfCutPercent, selectedWhatIfSubscription]);
+  const builderScenarioPreview = useMemo(
+    () => (settings ? simulateWhatIfScenario(builderScenarioQuestion, transactions, subscriptions, settings) : null),
+    [builderScenarioQuestion, settings, transactions, subscriptions],
+  );
 
   useEffect(() => {
     if (!("Notification" in window)) {
@@ -1440,7 +1603,7 @@ function App() {
               )}
             </section>
             <section className="home-intro live-briefing-grid">
-              {liveCards}
+              {liveOverview}
             </section>
 
             <div className="home-section-head">
@@ -1614,6 +1777,21 @@ function App() {
                 </article>
               )}
             </section>
+            <section className="card">
+              <div className="row">
+                <h3>Weekly review report</h3>
+                <p className="muted">Auto-generated</p>
+              </div>
+              <p className="muted">{weeklyReviewReport.title}</p>
+              <div className="suggestion-list">
+                <p className="muted"><strong>What happened</strong></p>
+                {weeklyReviewReport.happened.map((item) => <p key={`h-${item}`} className="muted">- {item}</p>)}
+                <p className="muted"><strong>What improved</strong></p>
+                {weeklyReviewReport.improved.map((item) => <p key={`i-${item}`} className="muted">- {item}</p>)}
+                <p className="muted"><strong>What to change next week</strong></p>
+                {weeklyReviewReport.next.map((item) => <p key={`n-${item}`} className="muted">- {item}</p>)}
+              </div>
+            </section>
 
             <div className="home-section-head">
               <h3>Recent activity</h3>
@@ -1710,8 +1888,8 @@ function App() {
         )}
 
         {tab === "Insights" && (
-          <div className="routine-layout">
-            <section className="card routine-card">
+          <div className="routine-layout routine-ios">
+            <section className="card routine-card routine-card-now">
               <p className="routine-section-kicker">RIGHT NOW</p>
               {currentTimelineBlock ? (
                 <div className="routine-now-card">
@@ -1727,45 +1905,70 @@ function App() {
                     <h3>Nothing scheduled right now</h3>
                     <p className="muted">Drop in one focus block so this hour has a clear target.</p>
                   </div>
-                  <button type="button" onClick={() => { setEditingTimelineEvent({ id: Date.now(), title: "", hour: currentHour, category: "work", durationMinutes: 60 }); setShowTimelineSheet(true); }}>+ Add</button>
+                  <button type="button" onClick={() => {
+                    const now = new Date();
+                    const raw = now.getHours() * 60 + now.getMinutes();
+                    const snapped = Math.round(raw / 15) * 15;
+                    const capped = Math.min(snapped, 24 * 60 - 60);
+                    setEditingTimelineEvent({
+                      id: Date.now(),
+                      title: "",
+                      hour: Math.floor(capped / 60),
+                      startMinute: capped % 60,
+                      category: "work",
+                      durationMinutes: 60,
+                      date: format(new Date(), "yyyy-MM-dd"),
+                    });
+                    setShowTimelineSheet(true);
+                  }}>+ Add</button>
                 </div>
               )}
             </section>
 
-            <section className="card routine-card">
-              <p className="routine-section-kicker">TODAY'S TIMELINE</p>
-              <div className="timeline-list">
-                {routineHours.map((hour) => {
-                  const event = sortedTimelineEvents.find((e) => e.hour === hour);
-                  const isNow = hour === currentHour;
-                  return (
-                    <button key={hour} type="button" className={`timeline-hour ${isNow ? "current" : ""}`} onClick={() => {
-                      setEditingTimelineEvent(event ?? { id: Date.now(), title: "", hour, category: "work", durationMinutes: 60 });
-                      setShowTimelineSheet(true);
-                    }}>
-                      <div className="timeline-hour-label">
-                        <span>{hour > 12 ? `${hour - 12}pm` : hour === 12 ? "12pm" : `${hour}am`}</span>
-                        {isNow && <span className="timeline-now">NOW</span>}
-                      </div>
-                      <div className="timeline-hour-events">
-                        {event ? (
-                          <div className={`timeline-event ${event.category}`}>
-                            <span>{event.title}</span>
-                            <small>{event.durationMinutes ?? 60}m</small>
-                          </div>
-                        ) : (
-                          <div className="timeline-empty">+ Add activity</div>
-                        )}
-                      </div>
-                    </button>
+            <section className="card routine-card routine-card-timeline routine-timeline-premium">
+              <p className="routine-section-kicker">TIMELINE</p>
+              <StructuredDayTimeline
+                events={timelineEvents}
+                liveNow={liveNow}
+                todayKey={format(liveNow, "yyyy-MM-dd")}
+                onEditEvent={(ev) => {
+                  const tk = format(liveNow, "yyyy-MM-dd");
+                  setEditingTimelineEvent({
+                    id: ev.id,
+                    title: ev.title,
+                    hour: ev.hour,
+                    startMinute: ev.startMinute,
+                    durationMinutes: ev.durationMinutes ?? 60,
+                    category: ev.category,
+                    subtasks: ev.subtasks,
+                    date: ev.date ?? tk,
+                  });
+                  setShowTimelineSheet(true);
+                }}
+                onAddAtMinuteOfDay={(dateKey, minuteOfDay) => {
+                  const snapped = Math.round(Math.max(5 * 60, Math.min(24 * 60 - 15, minuteOfDay)) / 15) * 15;
+                  setEditingTimelineEvent({
+                    id: Date.now(),
+                    title: "",
+                    hour: Math.floor(snapped / 60),
+                    startMinute: snapped % 60,
+                    category: "work",
+                    durationMinutes: 60,
+                    date: dateKey,
+                  });
+                  setShowTimelineSheet(true);
+                }}
+                onReschedule={(id, dateKey, hour, startMinute) => {
+                  setTimelineEvents((prev) =>
+                    prev.map((e) => (e.id === id ? { ...e, date: dateKey, hour, startMinute } : e)),
                   );
-                })}
-              </div>
+                }}
+              />
             </section>
 
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-checklist">
               <p className="routine-section-kicker">DAILY CHECKLIST</p>
-              <div className="row">
+              <div className="row routine-card-head">
                 <h3>Today's tasks</h3>
                 <span className="badge">{doneTasks} of {tasks.length} done</span>
               </div>
@@ -1780,9 +1983,9 @@ function App() {
               ))}
             </section>
 
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-template">
               <p className="routine-section-kicker">ROUTINE TEMPLATE</p>
-              <div className="row">
+              <div className="row routine-card-head">
                 <h3>Ideal day blocks</h3>
                 <div className="inline-actions">
                   <button type="button" onClick={applyTemplateToToday}>Apply Template to Today</button>
@@ -1800,9 +2003,9 @@ function App() {
               ))}
             </section>
 
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-plan">
               <p className="routine-section-kicker">PLAN AHEAD</p>
-              <div className="row">
+              <div className="row routine-card-head">
                 <h3>Tomorrow & this week</h3>
                 <button type="button" className="ghost-btn" onClick={() => { setEditingPlanAheadItem({ date: tomorrowLabel, title: "", hour: 9, category: "work", createdAt: new Date().toISOString() }); setShowPlanAheadSheet(true); }}>+ Add</button>
               </div>
@@ -1824,7 +2027,7 @@ function App() {
               ))}
             </section>
 
-            <section className="card routine-card">
+            <section className="card routine-card routine-card-reminders">
               <p className="routine-section-kicker">REMINDERS</p>
               {routineReminders.map((item) => (
                 <article key={item.id} className="routine-reminder-item">
@@ -2024,18 +2227,36 @@ function App() {
         )}
         {showTimelineSheet && editingTimelineEvent && (
           <RoutineBlockSheet
+            key={editingTimelineEvent.id}
             title={editingTimelineEvent.title}
             hour={editingTimelineEvent.hour}
+            startMinute={editingTimelineEvent.startMinute}
             durationMinutes={editingTimelineEvent.durationMinutes ?? 60}
             category={editingTimelineEvent.category}
+            subtasks={editingTimelineEvent.subtasks}
+            timeStep={900}
+            showSubtasks
             onClose={() => { setShowTimelineSheet(false); setEditingTimelineEvent(null); }}
-            onSave={({ title, hour, durationMinutes, category }) => {
+            onSave={({ title, hour, startMinute, durationMinutes, category, subtasks }) => {
               setTimelineEvents((prev) => {
                 const exists = prev.some((e) => e.id === editingTimelineEvent.id);
-                const nextEvent: TimelineEvent = { ...editingTimelineEvent, title, hour, durationMinutes, category };
+                const nextEvent: TimelineEvent = {
+                  ...editingTimelineEvent,
+                  title,
+                  hour,
+                  startMinute,
+                  durationMinutes,
+                  category,
+                  subtasks,
+                };
                 if (exists) return prev.map((e) => e.id === editingTimelineEvent.id ? nextEvent : e);
                 return [...prev, nextEvent];
               });
+              setShowTimelineSheet(false);
+              setEditingTimelineEvent(null);
+            }}
+            onDelete={() => {
+              setTimelineEvents((prev) => prev.filter((e) => e.id !== editingTimelineEvent.id));
               setShowTimelineSheet(false);
               setEditingTimelineEvent(null);
             }}
@@ -2043,10 +2264,13 @@ function App() {
         )}
         {showTemplateSheet && editingTemplateBlock && (
           <RoutineBlockSheet
+            key={editingTemplateBlock.id}
             title={editingTemplateBlock.name}
             hour={editingTemplateBlock.hour}
             durationMinutes={editingTemplateBlock.durationMinutes}
             category={editingTemplateBlock.category}
+            timeStep={3600}
+            showSubtasks={false}
             onClose={() => { setShowTemplateSheet(false); setEditingTemplateBlock(null); }}
             onSave={({ title, hour, durationMinutes, category }) => {
               setRoutineTemplate((prev) => {
@@ -2055,6 +2279,11 @@ function App() {
                 if (exists) return prev.map((e) => e.id === editingTemplateBlock.id ? block : e);
                 return [...prev, block];
               });
+              setShowTemplateSheet(false);
+              setEditingTemplateBlock(null);
+            }}
+            onDelete={() => {
+              setRoutineTemplate((prev) => prev.filter((e) => e.id !== editingTemplateBlock.id));
               setShowTemplateSheet(false);
               setEditingTemplateBlock(null);
             }}
@@ -2123,7 +2352,7 @@ function App() {
                   </div>
                   {sortedTimelineEvents.slice(0, 4).map((event) => (
                     <div key={event.id} className={`timeline-event ${event.category}`}>
-                      <span>{event.hour === 12 ? "12pm" : event.hour > 12 ? `${event.hour - 12}pm` : `${event.hour}am`} · {event.title}</span>
+                      <span>{formatTimelineClock(event)} · {event.title}</span>
                     </div>
                   ))}
                   {sortedTimelineEvents.length === 0 && <p className="muted">Your best hours are still open. Add one intentional block in Routine.</p>}
@@ -2237,6 +2466,22 @@ function App() {
               )}
               <div ref={chatEndRef} />
             </div>
+            {whatIfScenarios.length > 0 && (
+              <div className="what-if-compare">
+                <div className="row">
+                  <p className="ai-chat-kicker">WHAT-IF MEMORY</p>
+                  <button type="button" className="ghost-btn" onClick={() => setWhatIfScenarios([])}>Clear</button>
+                </div>
+                {whatIfScenarios.slice(0, 3).map((scenario) => (
+                  <article key={scenario.id} className="what-if-row">
+                    <strong>{scenario.title}</strong>
+                    <p className="muted">
+                      {money(scenario.currentMonthEnd)} {"->"} {money(scenario.simulatedMonthEnd)} ({scenario.totalSavings >= 0 ? "+" : ""}{money(scenario.totalSavings)})
+                    </p>
+                  </article>
+                ))}
+              </div>
+            )}
             <div className="assistant-quick">
               <button type="button" onClick={() => {
                 void askAssistant("Give me today's plan in 3 steps.");
@@ -2252,6 +2497,14 @@ function App() {
                 void askAssistant("What should I avoid spending on today?");
               }}>
                 Avoid list
+              </button>
+              <button type="button" onClick={() => {
+                void askAssistant("What if I cut food by 15% and cancel Netflix?");
+              }}>
+                What if?
+              </button>
+              <button type="button" onClick={() => setShowWhatIfBuilder(true)}>
+                Builder
               </button>
               <button type="button" onClick={() => { void sendAiNotification(); }}>
                 Notify me
@@ -2279,38 +2532,143 @@ function App() {
           </motion.section>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {showWhatIfBuilder && (
+          <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.section className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
+              <div className="row">
+                <h3>What-if builder</h3>
+                <button type="button" className="ghost-btn" onClick={() => setShowWhatIfBuilder(false)}>Close</button>
+              </div>
+              <label>
+                Cut category
+                <input
+                  value={whatIfCutCategory}
+                  onChange={(e) => setWhatIfCutCategory(e.target.value)}
+                  placeholder="food, transport, shopping..."
+                />
+              </label>
+              <label>
+                Cut by {Math.round(whatIfCutPercent)}%
+                <input
+                  type="range"
+                  min={1}
+                  max={80}
+                  value={whatIfCutPercent}
+                  onChange={(e) => setWhatIfCutPercent(Number(e.target.value) || 15)}
+                />
+              </label>
+              <label>
+                Cancel subscription (optional)
+                <select
+                  value={String(whatIfCancelSubscriptionId ?? "")}
+                  onChange={(e) => setWhatIfCancelSubscriptionId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">No cancellation</option>
+                  {subscriptions
+                    .filter((s) => typeof s.id === "number")
+                    .map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+                </select>
+              </label>
+              {builderScenarioPreview && (
+                <div className="what-if-preview">
+                  <p className="muted">Preview</p>
+                  {builderScenarioPreview.baseline.changes.map((c) => <p key={c} className="muted">- {c}</p>)}
+                  <p className="muted">Month-end: {money(builderScenarioPreview.baseline.currentMonthEnd)} {"->"} {money(builderScenarioPreview.baseline.simulatedMonthEnd)}</p>
+                </div>
+              )}
+              <div className="row">
+                <button type="button" className="ghost-btn" onClick={() => setShowWhatIfBuilder(false)}>Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWhatIfBuilder(false);
+                    setAssistantOpen(true);
+                    void askAssistant(builderScenarioQuestion);
+                  }}
+                >
+                  Run in chat
+                </button>
+              </div>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
+type RoutineBlockSavePayload = {
+  title: string;
+  hour: number;
+  startMinute?: number;
+  durationMinutes: number;
+  category: TimelineCategory;
+  subtasks?: string[];
+};
+
 function RoutineBlockSheet({
   title: initialTitle,
   hour: initialHour,
+  startMinute: initialStartMinute = 0,
   durationMinutes: initialDuration,
   category: initialCategory,
+  subtasks: initialSubtasks,
+  timeStep = 900,
+  showSubtasks = false,
   onClose,
   onSave,
+  onDelete,
 }: {
   title: string;
   hour: number;
+  startMinute?: number;
   durationMinutes: number;
   category: TimelineCategory;
+  subtasks?: string[];
+  timeStep?: number;
+  showSubtasks?: boolean;
   onClose: () => void;
-  onSave: (payload: { title: string; hour: number; durationMinutes: number; category: TimelineCategory }) => void;
+  onSave: (payload: RoutineBlockSavePayload) => void;
+  onDelete?: () => void;
 }) {
+  const pad2 = (n: number, max: number) => String(Math.max(0, Math.min(max, n))).padStart(2, "0");
   const [title, setTitle] = useState(initialTitle);
-  const [startTime, setStartTime] = useState(`${String(Math.max(0, Math.min(23, initialHour))).padStart(2, "0")}:00`);
+  const [startTime, setStartTime] = useState(() => {
+    const h = Math.max(0, Math.min(23, initialHour));
+    const m = Math.max(0, Math.min(59, initialStartMinute ?? 0));
+    return `${pad2(h, 23)}:${pad2(m, 59)}`;
+  });
   const [endTime, setEndTime] = useState(() => {
-    const start = Math.max(0, Math.min(23, initialHour));
-    const endHourRaw = start + Math.max(1, Math.round(initialDuration / 60));
-    const endHour = Math.max(0, Math.min(23, endHourRaw));
-    return `${String(endHour).padStart(2, "0")}:00`;
+    const startTotal = Math.max(0, Math.min(23, initialHour)) * 60 + Math.max(0, Math.min(59, initialStartMinute ?? 0));
+    let endTotal = startTotal + Math.max(15, initialDuration);
+    endTotal = Math.min(endTotal, 24 * 60 - 1);
+    return `${pad2(Math.floor(endTotal / 60), 23)}:${pad2(endTotal % 60, 59)}`;
   });
   const [category, setCategory] = useState<TimelineCategory>(initialCategory);
   const [keepAdding, setKeepAdding] = useState(false);
-  const hourNum = Math.max(0, Math.min(23, Number(startTime.split(":")[0]) || 0));
-  const endHour = Math.max(0, Math.min(23, Number(endTime.split(":")[0]) || hourNum + 1));
-  const durationNum = Math.max(15, (endHour - hourNum) * 60);
+  const [subtasksText, setSubtasksText] = useState(() =>
+    initialSubtasks && initialSubtasks.length > 0 ? initialSubtasks.join("\n") : "",
+  );
+
+  const parseClock = (t: string) => {
+    const [hRaw, mRaw] = t.split(":");
+    const h = Math.max(0, Math.min(23, Number(hRaw) || 0));
+    const m = Math.max(0, Math.min(59, Number(mRaw) || 0));
+    return { h, m, total: h * 60 + m };
+  };
+
+  const startParsed = parseClock(startTime);
+  const endParsed = parseClock(endTime);
+  let startTotal = startParsed.total;
+  let endTotal = endParsed.total;
+  if (endTotal <= startTotal) endTotal += 24 * 60;
+  const rawDuration = endTotal - startTotal;
+  const durationNum = Math.max(15, Math.min(24 * 60 - startTotal, rawDuration));
+
+  const hourNum = startParsed.h;
+  const minuteNum = startParsed.m;
+
   const quickTemplates = [
     { label: "Wake up", hour: 6, duration: 30, category: "personal" as const },
     { label: "Workout", hour: 7, duration: 45, category: "health" as const },
@@ -2318,22 +2676,32 @@ function RoutineBlockSheet({
     { label: "Lunch", hour: 13, duration: 45, category: "personal" as const },
     { label: "Wind down", hour: 21, duration: 45, category: "health" as const },
   ];
+
   return (
     <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => {
         e.preventDefault();
         if (!title.trim()) return;
-        const payload = {
+        const payload: RoutineBlockSavePayload = {
           title: title.trim(),
           hour: hourNum,
           durationMinutes: durationNum,
           category,
         };
+        if (timeStep <= 900) payload.startMinute = minuteNum;
+        if (showSubtasks) {
+          const lines = subtasksText.split("\n").map((s) => s.trim()).filter(Boolean);
+          payload.subtasks = lines.length > 0 ? lines : undefined;
+        }
         onSave(payload);
         if (keepAdding) {
           setTitle("");
-          const nextEnd = Math.min(23, hourNum + 1);
-          setEndTime(`${String(nextEnd).padStart(2, "0")}:00`);
+          const nextStart = startTotal + durationNum;
+          if (nextStart <= 24 * 60 - 30) {
+            setStartTime(`${pad2(Math.floor(nextStart / 60), 23)}:${pad2(nextStart % 60, 59)}`);
+            const nextEnd = Math.min(nextStart + durationNum, 24 * 60 - 1);
+            setEndTime(`${pad2(Math.floor(nextEnd / 60), 23)}:${pad2(nextEnd % 60, 59)}`);
+          }
         }
       }}>
         <h3>Routine block</h3>
@@ -2345,9 +2713,10 @@ function RoutineBlockSheet({
               className="ghost-btn"
               onClick={() => {
                 setTitle(preset.label);
-                setStartTime(`${String(preset.hour).padStart(2, "0")}:00`);
-                const endPresetHour = Math.min(23, preset.hour + Math.max(1, Math.round(preset.duration / 60)));
-                setEndTime(`${String(endPresetHour).padStart(2, "0")}:00`);
+                const st = preset.hour * 60;
+                const et = Math.min(st + preset.duration, 24 * 60 - 1);
+                setStartTime(`${pad2(preset.hour, 23)}:00`);
+                setEndTime(`${pad2(Math.floor(et / 60), 23)}:${pad2(et % 60, 59)}`);
                 setCategory(preset.category);
               }}
             >
@@ -2358,15 +2727,21 @@ function RoutineBlockSheet({
         <label>Activity<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Deep work, gym, walk..." required /></label>
         <div className="routine-inline-form">
           <label>
-            Start hour
-            <input type="time" step={3600} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            Start
+            <input type="time" step={timeStep} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
           </label>
           <label>
-            End time
-            <input type="time" step={3600} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            End
+            <input type="time" step={timeStep} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
           </label>
         </div>
         <p className="muted">Duration: {Math.floor(durationNum / 60)}h {durationNum % 60}m</p>
+        {showSubtasks && (
+          <label>
+            Subtasks (optional)
+            <textarea value={subtasksText} onChange={(e) => setSubtasksText(e.target.value)} rows={3} placeholder="One line per subtask" />
+          </label>
+        )}
         <div className="task-filter-row">
           {(["work", "health", "personal"] as const).map((opt) => (
             <button key={opt} type="button" className={category === opt ? "active" : ""} onClick={() => setCategory(opt)}>
@@ -2380,6 +2755,7 @@ function RoutineBlockSheet({
         </label>
         <div className="row">
           <button type="button" className="ghost-btn" onClick={onClose}>Cancel</button>
+          {onDelete && <button type="button" className="ghost-btn" onClick={onDelete}>Delete</button>}
           <button type="submit">Save block</button>
         </div>
       </motion.form>
@@ -2527,9 +2903,29 @@ function TransactionSheet({ initial, onClose, onSave }: { initial?: any; onClose
   const [category, setCategory] = useState(initial?.category ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
   const [date, setDate] = useState(initial ? format(parseISO(initial.date), "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"));
+  const [error, setError] = useState("");
+  const quality = useMemo(
+    () => getTransactionQualitySnapshot({ amount: Number(amount), type, category, note, date: new Date(date).toISOString() }),
+    [amount, type, category, note, date],
+  );
   return (
     <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={(e) => { e.preventDefault(); onSave({ amount: Number(amount), type, category: category || undefined, note, date: new Date(date).toISOString() }); }}>
+      <motion.form className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }} onSubmit={async (e) => {
+        e.preventDefault();
+        setError("");
+        try {
+          const clean = normalizeTransactionInput({
+            amount: Number(amount),
+            type,
+            category: category || undefined,
+            note,
+            date: new Date(date).toISOString(),
+          });
+          await onSave(clean);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Transaction is invalid.");
+        }
+      }}>
         <h3>{initial ? "Edit transaction" : "Quick transaction"}</h3>
         <label>Amount<input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="-5 or 2000" required /></label>
         <label>Type<select value={type} onChange={(e) => setType(e.target.value as TxType)}><option value="expense">Expense</option><option value="income">Income</option></select></label>
@@ -2537,6 +2933,9 @@ function TransactionSheet({ initial, onClose, onSave }: { initial?: any; onClose
         <datalist id="categories">{CATEGORY_NAMES.map((c) => <option key={c} value={c} />)}</datalist>
         <label>Note<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note" /></label>
         <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <p className="muted">Quality score: <strong>{quality.score}/100</strong> ({quality.grade})</p>
+        {quality.warnings.length > 0 && <p className="muted">Check: {quality.warnings.join(", ")}</p>}
+        {error && <p className="error-text">{error}</p>}
         <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>
       </motion.form>
     </motion.div>
@@ -2571,27 +2970,27 @@ function BulkTransactionSheet({
 }) {
   const [content, setContent] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
   const parseRows = () => {
     const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
     const parsed = lines.map((line, idx) => {
       const [amountRaw, typeRaw, categoryRaw, noteRaw, dateRaw] = line.split(",").map((x) => x?.trim());
-      const amount = Number(amountRaw);
-      const type = (typeRaw?.toLowerCase() ?? "") as TxType;
-      const validType = type === "expense" || type === "income";
-      const date = dateRaw ? new Date(dateRaw) : new Date();
-      if (!Number.isFinite(amount) || !validType || Number.isNaN(date.getTime())) {
+      try {
+        return normalizeTransactionInput({
+          amount: Number(amountRaw),
+          type: (typeRaw?.toLowerCase() ?? "") as TxType,
+          category: categoryRaw || undefined,
+          note: noteRaw || undefined,
+          date: dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString(),
+        });
+      } catch {
         throw new Error(`Line ${idx + 1} is invalid. Format: amount,type,category,note,YYYY-MM-DD`);
       }
-      return {
-        amount,
-        type,
-        category: categoryRaw || undefined,
-        note: noteRaw || undefined,
-        date: date.toISOString(),
-      };
     });
-    return parsed;
+    const { unique, duplicateCount } = dedupeNormalizedTransactions(parsed);
+    setInfo(duplicateCount > 0 ? `${duplicateCount} duplicate line(s) were skipped automatically.` : "");
+    return unique;
   };
 
   return (
@@ -2604,6 +3003,7 @@ function BulkTransactionSheet({
         onSubmit={async (e) => {
           e.preventDefault();
           try {
+            setError("");
             const rows = parseRows();
             await onSave(rows);
           } catch (err) {
@@ -2621,6 +3021,7 @@ function BulkTransactionSheet({
           rows={7}
           required
         />
+        {info && <p className="muted">{info}</p>}
         {error && <p className="error-text">{error}</p>}
         <div className="row"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save all</button></div>
       </motion.form>

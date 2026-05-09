@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { db, seedIfEmpty } from "./db";
 import { inferCategory } from "./logic";
+import { dedupeNormalizedTransactions, normalizeTransactionInput } from "./quality";
 import type { Settings, Subscription, Transaction } from "./types";
 
 const signedTxAmount = (tx: Pick<Transaction, "type" | "amount">) => (tx.type === "income" ? 1 : -1) * Math.abs(Number(tx.amount) || 0);
@@ -41,14 +42,15 @@ export const useZeroStore = create<State>((set, get) => ({
     set({ transactions, subscriptions, settings: settings ?? null, rules, loading: false });
   },
   addTransaction: async (t) => {
+    const clean = normalizeTransactionInput(t);
     const { rules } = get();
-    const inferred = inferCategory(`${t.note ?? ""} ${t.category ?? ""} ${t.type}`, rules);
+    const inferred = inferCategory(`${clean.note ?? ""} ${clean.category ?? ""} ${clean.type}`, rules);
     const tx: Omit<Transaction, "id"> = {
-      amount: t.amount,
-      type: t.type,
-      category: t.category || (t.type === "income" ? "Income" : inferred),
-      note: t.note,
-      date: t.date,
+      amount: clean.amount,
+      type: clean.type,
+      category: clean.category || (clean.type === "income" ? "Income" : inferred),
+      note: clean.note,
+      date: clean.date,
       createdAt: new Date().toISOString(),
     };
     await db.transactions.add(tx);
@@ -94,7 +96,9 @@ export const useZeroStore = create<State>((set, get) => ({
   },
   addTransactionsBulk: async (rows) => {
     const { rules } = get();
-    const prepared = rows.map((t) => {
+    const normalizedRows = rows.map((t) => normalizeTransactionInput(t));
+    const { unique } = dedupeNormalizedTransactions(normalizedRows);
+    const prepared = unique.map((t) => {
       const inferred = inferCategory(`${t.note ?? ""} ${t.category ?? ""} ${t.type}`, rules);
       return {
         amount: t.amount,

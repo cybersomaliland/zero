@@ -184,6 +184,8 @@ export function askFinanceAssistant(
   forecastData: Array<{ date: string; balance: number }>,
 ) {
   const q = question.toLowerCase().trim();
+  const scenario = simulateWhatIfScenario(question, transactions, subscriptions, settings);
+  if (scenario) return scenario.reply;
   const expenses = transactions.filter((t) => t.type === "expense");
   const byCategory = expenses.reduce<Record<string, number>>((acc, t) => {
     acc[t.category.toLowerCase()] = (acc[t.category.toLowerCase()] || 0) + Math.abs(t.amount);
@@ -232,4 +234,89 @@ export function askFinanceAssistant(
     return `Your projected low point is around ${minPoint.date} at ${money(minPoint.balance)}. Consider trimming variable spend ahead of that date.`;
   }
   return "Try asking: 'Can I afford a $25 meal today?', 'Where am I wasting money?', 'How much did I spend on food?', or 'What is my next low balance point?'.";
+}
+
+export function simulateWhatIfScenario(
+  question: string,
+  transactions: Transaction[],
+  subscriptions: Subscription[],
+  settings: Settings,
+) {
+  const q = question.toLowerCase();
+  const asksWhatIf = q.includes("what if") || q.includes("if i") || q.includes("simulate") || q.includes("scenario");
+  if (!asksWhatIf) return null;
+
+  const thisMonth = format(new Date(), "yyyy-MM");
+  const monthExpenses = transactions
+    .filter((t) => t.type === "expense" && format(parseISO(t.date), "yyyy-MM") === thisMonth)
+    .reduce<Record<string, number>>((acc, t) => {
+      acc[t.category.toLowerCase()] = (acc[t.category.toLowerCase()] || 0) + Math.abs(t.amount);
+      return acc;
+    }, {});
+  const monthExpenseTotal = Object.values(monthExpenses).reduce((sum, v) => sum + v, 0);
+  const monthlySubTotal = subscriptions.reduce((sum, s) => {
+    if (s.cycle === "weekly") return sum + s.amount * (52 / 12);
+    if (s.cycle === "yearly") return sum + s.amount / 12;
+    return sum + s.amount;
+  }, 0);
+
+  const cutMatch = q.match(/(?:cut|reduce|lower)\s+([a-z&\s]+?)\s+by\s+(\d{1,2})\s*%/i);
+  let categoryCutName = "";
+  let categoryCutPct = 0;
+  let categoryCutSavings = 0;
+  if (cutMatch) {
+    categoryCutName = cutMatch[1].trim().toLowerCase();
+    categoryCutPct = Math.min(90, Math.max(1, Number(cutMatch[2]) || 0));
+    const matchedCategoryTotal = Object.entries(monthExpenses)
+      .filter(([k]) => k.includes(categoryCutName))
+      .reduce((sum, [, v]) => sum + v, 0);
+    categoryCutSavings = matchedCategoryTotal * (categoryCutPct / 100);
+  }
+
+  let cancelSavings = 0;
+  let canceledName = "";
+  if (q.includes("cancel")) {
+    const cancelMatch = q.match(/cancel\s+([a-z0-9&\s.'-]+)/i);
+    const target = cancelMatch?.[1]?.trim().toLowerCase() ?? "";
+    const matched = target
+      ? subscriptions.find((s) => s.name.toLowerCase().includes(target))
+      : null;
+    if (matched) {
+      canceledName = matched.name;
+      if (matched.cycle === "weekly") cancelSavings = matched.amount * (52 / 12);
+      else if (matched.cycle === "yearly") cancelSavings = matched.amount / 12;
+      else cancelSavings = matched.amount;
+    }
+  }
+
+  const totalSavings = categoryCutSavings + cancelSavings;
+  const currentMonthEnd = settings.currentBalance - monthlySubTotal - monthExpenseTotal;
+  const simulatedMonthEnd = currentMonthEnd + totalSavings;
+
+  const changeNotes: string[] = [];
+  if (categoryCutSavings > 0) {
+    changeNotes.push(`Cut ${categoryCutName} by ${categoryCutPct}% -> saves about ${money(categoryCutSavings)}`);
+  }
+  if (cancelSavings > 0) {
+    changeNotes.push(`Cancel ${canceledName} -> saves about ${money(cancelSavings)} monthly`);
+  }
+  if (changeNotes.length === 0) return null;
+
+  const reply = [
+    "Scenario simulator result:",
+    ...changeNotes.map((n) => `- ${n}`),
+    `Estimated month-end balance: ${money(simulatedMonthEnd)} (vs current path ${money(currentMonthEnd)}).`,
+    `Net improvement: ${money(totalSavings)}.`,
+    "If you want, I can run another what-if with different % cuts or a different subscription.",
+  ].join("\n");
+
+  return {
+    reply,
+    baseline: {
+      currentMonthEnd,
+      simulatedMonthEnd,
+      totalSavings,
+      changes: changeNotes,
+    },
+  };
 }
