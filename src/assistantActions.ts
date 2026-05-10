@@ -71,6 +71,35 @@ export function streamedVisibleReply(soFar: string): string {
   return soFar.slice(0, cut).trimEnd();
 }
 
+/** Strip markdown fences Groq sometimes wraps inside markers. */
+export function sanitizeActionsMarkerBody(raw: string): string {
+  let s = raw.trim();
+  const openFence = /^```(?:json)?\s*/i;
+  if (openFence.test(s)) {
+    s = s.replace(openFence, "").replace(/\s*```\s*$/i, "").trim();
+  }
+  return s;
+}
+
+/** Accept several shapes models emit instead of strict `{ actions: [...] }`. */
+export function extractActionsList(payload: unknown): unknown[] | null {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return null;
+  const o = payload as Record<string, unknown>;
+  const arrayKeys = ["actions", "steps", "operations", "commands", "tool_calls", "toolCalls"];
+  for (const k of arrayKeys) {
+    const v = o[k];
+    if (Array.isArray(v)) return v;
+  }
+  if (o.action && typeof o.action === "object" && !Array.isArray(o.action)) {
+    return [o.action];
+  }
+  if (typeof o.type === "string") {
+    return [payload];
+  }
+  return null;
+}
+
 export async function executeAssistantPayload<
   TimelineEvent extends {
     id: number;
@@ -88,13 +117,11 @@ export async function executeAssistantPayload<
 ): Promise<{ applied: string[]; errors: string[] }> {
   const applied: string[] = [];
   const errors: string[] = [];
-  if (!payload || typeof payload !== "object") {
-    errors.push("Invalid actions payload.");
-    return { applied, errors };
-  }
-  const actionsUnknown = (payload as { actions?: unknown }).actions;
-  if (!Array.isArray(actionsUnknown)) {
-    errors.push("Missing actions array.");
+  const actionsUnknown = extractActionsList(payload);
+  if (!actionsUnknown) {
+    errors.push(
+      'No actions found. Use {"version":1,"actions":[{...}]} or a raw JSON array of objects like [{"type":"add_task",...}].',
+    );
     return { applied, errors };
   }
   const actions = actionsUnknown.slice(0, MAX_ACTIONS);

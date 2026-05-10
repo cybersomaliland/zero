@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subWeeks } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askGroqFinanceAssistant } from "./ai";
-import { executeAssistantPayload, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
+import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
 import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money, simulateWhatIfScenario } from "./logic";
@@ -1526,7 +1526,7 @@ function App() {
       let automationFooter = "";
       if (actionsJson) {
         try {
-          const payload = JSON.parse(actionsJson) as unknown;
+          const payload = JSON.parse(sanitizeActionsMarkerBody(actionsJson)) as unknown;
           const res = await executeAssistantPayload(payload, {
             todayKey: format(liveNow, "yyyy-MM-dd"),
             setTimelineEvents,
