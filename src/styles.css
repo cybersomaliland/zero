@@ -2483,6 +2483,28 @@ html[data-theme="dark"] .bill-alert-row .live-label {
   font-size: 18px;
   letter-spacing: -0.01em;
 }
+.coach-zero-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.coach-zero-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.28);
+}
+html[data-theme="dark"] .coach-zero-live-dot {
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.35);
+}
+.ai-bubble.assistant.coach-zero-situation {
+  font-size: 13px;
+  line-height: 1.5;
+}
 .ai-chat-subtitle {
   margin: 0;
   color: #6d7584;
@@ -2848,19 +2870,117 @@ html[data-theme="dark"] .bill-alert-row .live-label {
 .money-this-week-simple.money-this-week-card--collapsed {
   gap: 0;
 }
-.money-this-week-simple .money-this-week-lead {
-  margin: 6px 0 10px;
-  font-size: 14px;
-  line-height: 1.45;
+.money-week-panel {
+  display: grid;
+  gap: 14px;
+  padding-top: 2px;
+}
+.money-week-kpis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.money-week-kpi {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg-tertiary, #f4f7fc);
+  box-shadow: inset 0 0 0 1px var(--border, #e4ebf2);
+  min-width: 0;
+}
+.money-week-kpi--span {
+  grid-column: 1 / -1;
+}
+.money-week-kpi-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary, #64748b);
+}
+.money-week-kpi-value {
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--text-primary, #0f172a);
+}
+.money-week-kpi-value--sm {
+  font-size: 15px;
+  font-weight: 700;
+}
+.money-week-kpi-note {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+.money-week-runway-block {
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--text-primary, #1e293b);
 }
-.money-this-week-simple .money-this-week-line {
-  margin: 0 0 8px;
+.money-week-runway-text {
+  margin: 0;
+}
+.money-week-runway-text strong {
+  font-weight: 700;
+}
+.money-week-rhythm-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #64748b);
+}
+.money-week-rhythm-muted {
+  margin: 0;
   font-size: 13px;
   line-height: 1.45;
 }
-.money-this-week-simple .money-this-week-line:last-child {
-  margin-bottom: 0;
+.money-week-rhythm-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.money-week-chip {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  min-width: 0;
+}
+.money-week-chip-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.money-week-chip-day {
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--text-primary);
+}
+.money-week-chip-amt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.money-week-chip--light {
+  background: linear-gradient(145deg, #ecfdf5, #d1fae5);
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.25);
+}
+.money-week-chip--heavy {
+  background: linear-gradient(145deg, #fff7ed, #fed7aa);
+  box-shadow: inset 0 0 0 1px rgba(234, 88, 12, 0.22);
+}
+html[data-theme="dark"] .money-week-chip--light {
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.35);
+}
+html[data-theme="dark"] .money-week-chip--heavy {
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.35);
 }
 .morning-coach-quick {
   display: flex;

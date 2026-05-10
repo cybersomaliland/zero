@@ -249,7 +249,7 @@ export function askFinanceAssistant(
   const safeToday = Math.max(0, budget.todayRemaining);
 
   if ((q.includes("afford") || q.includes("meal")) && askedAmount === null) {
-    return `I can help with that. Tell me the meal price, for example: "Can I afford a $18 meal today?"`;
+    return `Yeah, let's figure it out — drop the price and I'll check it against today's safe-to-spend. Example: "Can I afford an $18 meal today?"`;
   }
   if (q.includes("afford") || q.includes("meal")) {
     const amount = askedAmount ?? 0;
@@ -279,7 +279,7 @@ export function askFinanceAssistant(
     if (!minPoint) return "Add more data and I can forecast your next balance trend.";
     return `Your projected low point is around ${minPoint.date} at ${money(minPoint.balance)}. Consider trimming variable spend ahead of that date.`;
   }
-  return "Try asking: 'Can I afford a $25 meal today?', 'Where am I wasting money?', 'How much did I spend on food?', or 'What is my next low balance point?'.";
+  return "I'm tuned in once you point me at something — try e.g. \"Can I afford a $25 meal today?\", \"Where's my money leaking?\", food totals, or your next tight balance week. What do you want to unpack first?";
 }
 
 export function simulateWhatIfScenario(

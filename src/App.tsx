@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subDays, subWeeks } from "date-fns";
+import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subDays } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
@@ -47,12 +47,6 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Insights: { icon: "insights", label: "Routine" },
   Settings: { icon: "settings", label: "Settings" },
 };
-const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
-  {
-    role: "assistant",
-    text: "I'm Coach Zero. Ask about money, or tell me to plan your day, add calendar blocks, checklist tasks, log spending, or complete tasks — I'll apply changes when you ask.",
-  },
-];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
 type ThemePreference = "system" | "light" | "dark";
@@ -166,6 +160,7 @@ function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantEngine, setAssistantEngine] = useState<"groq" | "fallback">("fallback");
   const [assistantEngineReason, setAssistantEngineReason] = useState("");
+  const [groqBackendLive, setGroqBackendLive] = useState(false);
   const [showWhatIfBuilder, setShowWhatIfBuilder] = useState(false);
   const [whatIfCutCategory, setWhatIfCutCategory] = useState("food");
   const [whatIfCutPercent, setWhatIfCutPercent] = useState(15);
@@ -192,7 +187,6 @@ function App() {
   const [timelineSortAsc, setTimelineSortAsc] = useState(true);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const routineReminderBody = "Time to review your routine and next priority.";
-  const [coachNudgesEnabled] = useState(true);
   const [showReminderSheet, setShowReminderSheet] = useState(false);
   const [meals, setMeals] = useState<Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>>([]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
@@ -227,12 +221,12 @@ function App() {
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
     try {
       const raw = localStorage.getItem("zero_ai_chat_v1");
-      if (!raw) return DEFAULT_CHAT;
+      if (!raw) return [];
       const parsed = JSON.parse(raw) as Array<{ role: "assistant" | "user"; text: string }>;
-      if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_CHAT;
+      if (!Array.isArray(parsed)) return [];
       return parsed;
     } catch {
-      return DEFAULT_CHAT;
+      return [];
     }
   });
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -335,6 +329,25 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    void fetch("/api/groq/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { configured?: boolean; ok?: boolean } | null) => {
+        setGroqBackendLive(Boolean(j?.configured ?? j?.ok));
+      })
+      .catch(() => setGroqBackendLive(false));
+  }, []);
+
+  useEffect(() => {
+    if (!assistantOpen) return;
+    void fetch("/api/groq/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { configured?: boolean; ok?: boolean } | null) => {
+        setGroqBackendLive(Boolean(j?.configured ?? j?.ok));
+      })
+      .catch(() => setGroqBackendLive(false));
+  }, [assistantOpen]);
 
   useEffect(() => {
     if (!routineHydrated) return;
@@ -991,11 +1004,6 @@ function App() {
     const thisWeekEndDay = endOfWeek(now, { weekStartsOn });
     const thisWeekInterval = { start: startOfDay(thisWeekStart), end: endOfDay(thisWeekEndDay) };
 
-    const prevAnchor = subWeeks(now, 1);
-    const prevWeekStart = startOfWeek(prevAnchor, { weekStartsOn });
-    const prevWeekEndDay = endOfWeek(prevAnchor, { weekStartsOn });
-    const prevWeekInterval = { start: startOfDay(prevWeekStart), end: endOfDay(prevWeekEndDay) };
-
     const dateInInterval = (iso: string, interval: typeof thisWeekInterval) => {
       const d = parseISO(iso);
       if (!Number.isFinite(+d)) return false;
@@ -1003,14 +1011,12 @@ function App() {
     };
 
     const thisWeekTx = transactions.filter((tx) => dateInInterval(tx.date, thisWeekInterval));
-    const prevWeekTx = transactions.filter((tx) => dateInInterval(tx.date, prevWeekInterval));
 
     const totals = (txs: typeof transactions) => ({
       spent: txs.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(t.amount), 0),
       income: txs.filter((t) => t.type === "income").reduce((sum, t) => sum + Math.abs(t.amount), 0),
     });
     const thisTotals = totals(thisWeekTx);
-    const prevTotals = totals(prevWeekTx);
     const thisTopCategory = Object.entries(
       thisWeekTx
         .filter((t) => t.type === "expense")
@@ -1021,34 +1027,61 @@ function App() {
     ).sort((a, b) => b[1] - a[1])[0];
 
     const weekRange = `${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")}`;
-    const snapshotLine =
-      `Week-to-date: ${money(thisTotals.spent)} out · ${money(thisTotals.income)} income logged` +
-      (thisTopCategory ? ` · largest bucket: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).` : ".");
 
     const daysLeftWeek = Math.max(0, budgetSnapshot.daysLeftInWeek);
-    const paceLine =
-      safePerDay <= 0
-        ? "Set money details in Settings to estimate runway from your daily allowance."
-        : daysLeftWeek <= 0
-          ? `Your allowance is about ${money(safePerDay)}/day — week window closing; carry discipline into next week.`
-          : `Rough runway: ~${money(safePerDay * daysLeftWeek)} across ${daysLeftWeek} day(s) left if you stay near ${money(safePerDay)}/day (approx.).`;
+    const paceUnavailable = safePerDay <= 0;
+    const weekClosing = daysLeftWeek <= 0;
+    const runwayTotal = !paceUnavailable && !weekClosing ? safePerDay * daysLeftWeek : null;
 
-    let takeawayLine = "Keep logging expenses so this weekly snapshot stays honest.";
-    if (thisTotals.income <= 0 && thisTotals.spent > 0) {
-      takeawayLine = "Log income entries too — spend vs income only works with both sides.";
-    } else if (thisTotals.income > 0 && thisTotals.spent > thisTotals.income) {
-      takeawayLine = "Spend passed logged income this week — review categories.";
-    } else if (prevTotals.spent > 0 && thisTotals.spent + 0.005 < prevTotals.spent) {
-      takeawayLine = `Spend down about ${money(prevTotals.spent - thisTotals.spent)} vs last week — nice slack.`;
-    } else if (thisTopCategory) {
-      takeawayLine = `Soft goal: ease ${thisTopCategory[0]} next few days to protect runway.`;
+    const todayCap = startOfDay(now);
+    const weekLastDay = startOfDay(thisWeekEndDay);
+    const spendRangeEnd = todayCap.getTime() <= weekLastDay.getTime() ? todayCap : weekLastDay;
+    const weekDaysElapsed = eachDayOfInterval({ start: startOfDay(thisWeekStart), end: spendRangeEnd });
+    const dayKeys = weekDaysElapsed.map((d) => format(d, "yyyy-MM-dd"));
+    const spendByDay: Record<string, number> = Object.fromEntries(dayKeys.map((k) => [k, 0]));
+    for (const tx of thisWeekTx) {
+      if (tx.type !== "expense") continue;
+      const key = format(parseISO(tx.date), "yyyy-MM-dd");
+      if (key in spendByDay) spendByDay[key] += Math.abs(tx.amount);
+    }
+    const pairs = dayKeys.map((k) => [k, spendByDay[k]] as const);
+    const maxSpend = pairs.reduce((m, [, v]) => Math.max(m, v), 0);
+    const minSpend = pairs.reduce((m, [, v]) => Math.min(m, v), Number.POSITIVE_INFINITY);
+
+    type DayRhythm =
+      | { kind: "unavailable" }
+      | { kind: "no-expenses" }
+      | { kind: "flat"; amount: number }
+      | { kind: "compare"; lightest: { dateKey: string; amount: number }; heaviest: { dateKey: string; amount: number } };
+
+    let dayRhythm: DayRhythm;
+    if (pairs.length === 0) {
+      dayRhythm = { kind: "unavailable" };
+    } else if (maxSpend <= 0) {
+      dayRhythm = { kind: "no-expenses" };
+    } else if (minSpend === maxSpend) {
+      dayRhythm = { kind: "flat", amount: minSpend };
+    } else {
+      const best = pairs.reduce((a, b) => (b[1] < a[1] ? b : a));
+      const worst = pairs.reduce((a, b) => (b[1] > a[1] ? b : a));
+      dayRhythm = {
+        kind: "compare",
+        lightest: { dateKey: best[0], amount: best[1] },
+        heaviest: { dateKey: worst[0], amount: worst[1] },
+      };
     }
 
     return {
       weekRange,
-      snapshotLine,
-      paceLine,
-      takeawayLine,
+      spent: thisTotals.spent,
+      income: thisTotals.income,
+      topCategory: thisTopCategory ? { name: thisTopCategory[0], amount: thisTopCategory[1] } : null,
+      daysLeftWeek,
+      safePerDay,
+      paceUnavailable,
+      weekClosing,
+      runwayTotal,
+      dayRhythm,
     };
   }, [transactions, budgetSnapshot.daysLeftInWeek, safePerDay]);
   useEffect(() => {
@@ -1193,6 +1226,82 @@ function App() {
     }),
     [upcoming],
   );
+
+  /** Opening snapshot when the assistant chat is empty — reflects live money, routine, and bills. */
+  const coachZeroSituationIntro = useMemo(() => {
+    if (!settings) {
+      return "Finish loading your profile — then I can tie this to your balances and routine.";
+    }
+    const name = (settings.profileName || "").trim();
+    const address = name ? `${name}, here's what's live:` : "Here's what's live:";
+    const tod =
+      currentHour < 12 ? "Morning" : currentHour < 17 ? "Afternoon" : currentHour < 22 ? "Evening" : "Late night";
+
+    const bits: string[] = [`${address} ${tod.toLowerCase()} —`];
+
+    if (safePerDay <= 0) {
+      bits.push("set balance and bills in Settings so I can read today's runway.");
+    } else if (todayRemaining < 0) {
+      bits.push(
+        `you're about ${money(Math.abs(todayRemaining))} past today's allowance guide (${money(todaySpent)} logged vs ~${money(safePerDay)} daily band).`,
+      );
+    } else {
+      bits.push(
+        `today you've logged ${money(todaySpent)} spend with roughly ${money(todayRemaining)} left vs ~${money(safePerDay)} daily guide.`,
+      );
+    }
+
+    if (tasks.length === 0) {
+      bits.push("checklist is empty.");
+    } else {
+      const highOpen = tasks.filter((t) => !t.done && t.priority === "high").length;
+      bits.push(
+        `tasks ${doneTasks}/${tasks.length} done${highOpen ? ` (${highOpen} high-priority still open)` : ""}.`,
+      );
+    }
+
+    if (mealStats.planned > 0) {
+      bits.push(`meals ${mealStats.completed}/${mealStats.planned} marked done.`);
+    }
+
+    if (currentTimelineBlock) {
+      bits.push(`timeline: in "${currentTimelineBlock.title}" — ~${currentTimelineBlock.minutesLeft} min left.`);
+    } else if (nextTimelineBlock && nextTimelineBlockEtaMinutes > 0) {
+      bits.push(`next block "${nextTimelineBlock.title}" in ~${nextTimelineBlockEtaMinutes} min.`);
+    } else if (sortedTimelineEvents.length > 0) {
+      bits.push(`${sortedTimelineEvents.length} block(s) today (${sortedTimelineEvents[0]?.title ?? "timeline"} next).`);
+    } else {
+      bits.push("nothing on today's timeline yet.");
+    }
+
+    if (weeklyDueBills.length > 0) {
+      bits.push(`${weeklyDueBills.length} bill(s) due in the next week.`);
+    }
+
+    if (streakAtRisk) {
+      bits.push("streak: log a transaction or routine touch before midnight to keep the chain.");
+    }
+
+    bits.push("Say what you want — I'll run changes when you ask.");
+    return bits.join(" ");
+  }, [
+    settings,
+    currentHour,
+    safePerDay,
+    todayRemaining,
+    todaySpent,
+    tasks,
+    doneTasks,
+    mealStats.planned,
+    mealStats.completed,
+    currentTimelineBlock,
+    nextTimelineBlock,
+    nextTimelineBlockEtaMinutes,
+    sortedTimelineEvents,
+    weeklyDueBills.length,
+    streakAtRisk,
+  ]);
+
   const allowanceProgressTone = useMemo(() => {
     if (todayRemaining < 0 || allowanceProgressPct >= 90) return "danger";
     if (allowanceProgressPct >= 60) return "warn";
@@ -1547,35 +1656,6 @@ function App() {
     } catch {
       // ignore schedule failures here
     }
-  };
-  const sendAiNotification = async () => {
-    if (!coachNudgesEnabled) {
-      setPushStatusDetail("Enable Coach nudges toggle first.");
-      return;
-    }
-    if (notifState !== "granted") {
-      setPushStatusDetail("Enable notifications first.");
-      return;
-    }
-    const lastAssistant = [...chat].reverse().find((msg) => msg.role === "assistant");
-    if (!lastAssistant) {
-      setPushStatusDetail("No Coach Zero message found yet.");
-      return;
-    }
-    const response = await fetch("/api/send-notification", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "custom",
-        data: { title: "Coach zero", message: lastAssistant.text.slice(0, 120) },
-      }),
-    });
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      setPushStatusDetail(String(errorBody?.error || "Failed to send AI notification."));
-      return;
-    }
-    setPushStatusDetail("Coach Zero notification sent.");
   };
   const runAssistantAutomation = async (question: string) => {
     const notes: string[] = [];
@@ -2399,9 +2479,68 @@ function App() {
                 className={`money-this-week-body ${moneyThisWeekExpanded ? "is-expanded" : "is-collapsed"}`}
                 aria-hidden={!moneyThisWeekExpanded}
               >
-                <p className="money-this-week-lead">{moneyThisWeek.snapshotLine}</p>
-                <p className="muted money-this-week-line">{moneyThisWeek.paceLine}</p>
-                <p className="muted money-this-week-line">{moneyThisWeek.takeawayLine}</p>
+                <div className="money-week-panel">
+                  <div className="money-week-kpis" aria-label="Week spending summary">
+                    <div className="money-week-kpi">
+                      <span className="money-week-kpi-label">Spent</span>
+                      <span className="money-week-kpi-value">{money(moneyThisWeek.spent)}</span>
+                    </div>
+                    <div className="money-week-kpi">
+                      <span className="money-week-kpi-label">Income</span>
+                      <span className="money-week-kpi-value">{money(moneyThisWeek.income)}</span>
+                    </div>
+                    {moneyThisWeek.topCategory ? (
+                      <div className="money-week-kpi money-week-kpi--span">
+                        <span className="money-week-kpi-label">Top category</span>
+                        <span className="money-week-kpi-value money-week-kpi-value--sm">{moneyThisWeek.topCategory.name}</span>
+                        <span className="money-week-kpi-note">{money(moneyThisWeek.topCategory.amount)}</span>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="money-week-runway-block">
+                    {moneyThisWeek.paceUnavailable ? (
+                      <p className="muted money-week-runway-text">
+                        Set balance and bills in Settings to estimate runway for the rest of this week.
+                      </p>
+                    ) : moneyThisWeek.weekClosing ? (
+                      <p className="money-week-runway-text">
+                        Week window closing — target near <strong>{money(moneyThisWeek.safePerDay)}</strong>/day into next week.
+                      </p>
+                    ) : (
+                      <p className="money-week-runway-text">
+                        About <strong>{money(moneyThisWeek.runwayTotal ?? 0)}</strong> headroom across{" "}
+                        <strong>{moneyThisWeek.daysLeftWeek}</strong> day(s) at ~<strong>{money(moneyThisWeek.safePerDay)}</strong>/day.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="money-week-rhythm">
+                    <p className="money-week-rhythm-title">Lightest vs heaviest day</p>
+                    {moneyThisWeek.dayRhythm.kind === "unavailable" ? (
+                      <p className="muted money-week-rhythm-muted">Day breakdown unavailable.</p>
+                    ) : moneyThisWeek.dayRhythm.kind === "no-expenses" ? (
+                      <p className="muted money-week-rhythm-muted">No expenses logged this week yet.</p>
+                    ) : moneyThisWeek.dayRhythm.kind === "flat" ? (
+                      <p className="muted money-week-rhythm-muted">
+                        Same pace each day (~{money(moneyThisWeek.dayRhythm.amount)}) — no standout yet.
+                      </p>
+                    ) : (
+                      <div className="money-week-rhythm-pair">
+                        <div className="money-week-chip money-week-chip--light">
+                          <span className="money-week-chip-label">Lightest</span>
+                          <span className="money-week-chip-day">{format(parseISO(moneyThisWeek.dayRhythm.lightest.dateKey), "EEE")}</span>
+                          <span className="money-week-chip-amt">{money(moneyThisWeek.dayRhythm.lightest.amount)}</span>
+                        </div>
+                        <div className="money-week-chip money-week-chip--heavy">
+                          <span className="money-week-chip-label">Heaviest</span>
+                          <span className="money-week-chip-day">{format(parseISO(moneyThisWeek.dayRhythm.heaviest.dateKey), "EEE")}</span>
+                          <span className="money-week-chip-amt">{money(moneyThisWeek.dayRhythm.heaviest.amount)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -3329,15 +3468,30 @@ function App() {
             <div className="ai-chat-head">
               <div className="ai-chat-title-wrap">
                 <p className="ai-chat-kicker">COACH ZERO</p>
-                <h3>Coach Zero</h3>
-                <p className="ai-chat-subtitle">{assistantBusy ? "Thinking..." : "Ready when you are."}</p>
+                <h3 className="coach-zero-heading">
+                  {groqBackendLive ? (
+                    <span
+                      className="coach-zero-live-dot"
+                      title="Groq backend ready"
+                      aria-label="Groq backend connected"
+                    />
+                  ) : null}
+                  Coach Zero
+                </h3>
+                <p className="ai-chat-subtitle">
+                  {assistantBusy
+                    ? "Thinking…"
+                    : chat.length === 0
+                      ? "Live snapshot updates as money, tasks, and calendar change."
+                      : "Pick up the thread below."}
+                </p>
               </div>
               <div className="ai-chat-actions">
                 <button
                   type="button"
                   className="ghost-btn"
                   onClick={() => {
-                    setChat(DEFAULT_CHAT);
+                    setChat([]);
                     localStorage.removeItem("zero_ai_chat_v1");
                   }}
                 >
@@ -3350,6 +3504,9 @@ function App() {
               <p className="ai-engine-reason muted">{assistantEngineReason}</p>
             )}
             <div className="ai-chat-log">
+              {chat.length === 0 && !assistantBusy && settings ? (
+                <p className="ai-bubble assistant coach-zero-situation">{coachZeroSituationIntro}</p>
+              ) : null}
               {chat.map((msg, i) => (
                 <p key={`${msg.role}-${i}`} className={`ai-bubble ${msg.role}`}>
                   {msg.text}
@@ -3380,51 +3537,11 @@ function App() {
                 ))}
               </div>
             )}
-            <div className="assistant-quick">
-              <button type="button" onClick={() => {
-                void askAssistant("Give me today's plan in 3 steps.");
-              }}>
-                Today&apos;s plan
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant(
-                  `Plan my whole day from now — schedule blocks on my timeline for today (${format(liveNow, "yyyy-MM-dd")}), add 3 realistic checklist tasks, and suggest one planned expense amount that fits my remaining daily allowance. Apply everything.`,
-                );
-              }}>
-                Plan day + apply
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("Log a $12.50 expense for lunch under Food & Drink today and add a 30-minute lunch block at noon on my timeline.");
-              }}>
-                Sample log + block
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("Can I spend on a meal today?");
-              }}>
-                Meal check
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("What should I avoid spending on today?");
-              }}>
-                Avoid list
-              </button>
-              <button type="button" onClick={() => {
-                void askAssistant("What if I cut food by 15% and cancel Netflix?");
-              }}>
-                What if?
-              </button>
-              <button type="button" onClick={() => setShowWhatIfBuilder(true)}>
-                Builder
-              </button>
-              <button type="button" onClick={() => { void sendAiNotification(); }}>
-                Notify me
-              </button>
-            </div>
             <div className="assistant-input ai-input-wrap">
               <input
                 value={assistantQuestion}
                 onChange={(e) => setAssistantQuestion(e.target.value)}
-                placeholder="Message Coach Zero..."
+                placeholder="Tell Coach Zero what's going on…"
               />
               <button
                 type="button"
