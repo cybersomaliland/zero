@@ -163,6 +163,114 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   display: grid;
   gap: 8px;
 }
+.settings-streak-protection-row {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg-tertiary, #f4f7fc);
+  box-shadow: inset 0 0 0 1px var(--border, #e2e8f0);
+}
+.settings-streak-protection-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.settings-streak-protection-copy strong {
+  font-size: 14px;
+}
+.settings-streak-protection-copy .muted {
+  font-size: 12px;
+  line-height: 1.35;
+}
+.streak-protect-banner {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: linear-gradient(135deg, #fff7ed, #fff0f8);
+  box-shadow: inset 0 0 0 1px #fecdd3;
+  color: #9a3412;
+}
+html[data-theme="dark"] .streak-protect-banner {
+  background: #2a1818;
+  color: #fdba74;
+  box-shadow: inset 0 0 0 1px #7f1d1d;
+}
+.bio-lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: grid;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: var(--bg-primary, #f2f4f8);
+}
+html[data-theme="dark"] .bio-lock-screen {
+  background: var(--bg-primary, #000);
+}
+.bio-lock-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 24px 20px;
+  border-radius: 20px;
+  background: var(--bg-secondary, #fff);
+  box-shadow: var(--shadow, 0 16px 40px #10182828), inset 0 1px 0 #ffffff66;
+  text-align: center;
+}
+.bio-lock-kicker {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent, #0a84ff);
+}
+.bio-lock-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+.bio-lock-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.bio-lock-unlock {
+  margin-top: 4px;
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent, #0a84ff);
+  color: #fff;
+}
+.bio-lock-unlock:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.bio-lock-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, #c62828);
+}
+.bio-lock-reset {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  text-decoration: underline;
+}
 .settings-danger {
   border: 1px solid #f6d0d6;
   background: linear-gradient(180deg, #fffafb, #fff3f5);

@@ -237,6 +237,11 @@ function buildNotification(type, data = {}) {
       "Day's ready. [X] things to do, [amount] to spend.",
       "You've got [X] tasks and [amount]. Let's go.",
     ],
+    streak_protect: [
+      "[X]-day streak — log spend or Routine tonight.",
+      "Protect [X] days — one tiny log saves the chain.",
+      "Streak [X] — touch Routine or Activity before midnight.",
+    ],
     custom: ["[message]"],
   };
 
@@ -248,15 +253,17 @@ function buildNotification(type, data = {}) {
     savings: "Savings pulse",
     task_still_open: task,
     morning_briefing: "Morning pulse",
+    streak_protect: "Streak protection",
     custom: compactLabel(data.title, "Update"),
   };
 
   const template = pickTemplate(type, variants[type] || variants.custom);
+  const streakDaysVal = Number(data.streakDays ?? data.day ?? 0);
   const bodyRaw = interpolateTemplate(template, {
     Bill: bill,
     amount,
     task,
-    X: String(day || tasksCount || 1),
+    X: String(type === "streak_protect" ? Math.max(1, streakDaysVal || 1) : day || tasksCount || 1),
     block,
     time,
     message: String(data.message || ""),

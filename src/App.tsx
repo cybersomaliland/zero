@@ -9,8 +9,17 @@ import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills,
 import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
+import { BiometricLockScreen } from "./BiometricLockScreen";
 import { IosDayTimeline } from "./IosDayTimeline";
 import { useZeroStore } from "./store";
+import {
+  bioLockClear,
+  bioLockIsSupported,
+  bioLockPlatformAuthenticatorAvailable,
+  bioLockReadCredentialIdB64,
+  bioLockReadEnabled,
+  bioLockRegister,
+} from "./webauthnLock";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
 const tabs = ["Home", "Transactions", "Subscriptions", "Insights", "Settings"] as const;
@@ -204,6 +213,14 @@ function App() {
     "default",
   );
   const [pushConnected, setPushConnected] = useState(false);
+  const [streakProtectionEnabled, setStreakProtectionEnabled] = useState(() => {
+    try {
+      if (localStorage.getItem("zero_streak_protection_v1") === "0") return false;
+    } catch {
+      // ignore
+    }
+    return true;
+  });
   const [pushStatusDetail, setPushStatusDetail] = useState("");
   const [testNotifDelaySec, setTestNotifDelaySec] = useState("10");
   const [scheduledNotifAt, setScheduledNotifAt] = useState<number | null>(null);
@@ -217,6 +234,18 @@ function App() {
     }
     return "system";
   });
+  const [bioLockCredentialPresent, setBioLockCredentialPresent] = useState(() => bioLockReadCredentialIdB64() != null);
+  const [bioLockFeatureEnabled, setBioLockFeatureEnabled] = useState(() => bioLockReadEnabled());
+  const bioLockNeedsChallenge = bioLockFeatureEnabled && bioLockCredentialPresent;
+  const [bioLockUnlocked, setBioLockUnlocked] = useState(
+    () => !(bioLockReadEnabled() && bioLockReadCredentialIdB64() != null),
+  );
+  const [bioLockUiHint, setBioLockUiHint] = useState("");
+  const [bioLockPlatformReady, setBioLockPlatformReady] = useState(false);
+
+  useEffect(() => {
+    void bioLockPlatformAuthenticatorAvailable().then(setBioLockPlatformReady);
+  }, []);
 
   useEffect(() => {
     void init();
@@ -454,6 +483,13 @@ function App() {
     }
   }, [regionalBriefExpanded]);
   useEffect(() => {
+    try {
+      localStorage.setItem("zero_streak_protection_v1", streakProtectionEnabled ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [streakProtectionEnabled]);
+  useEffect(() => {
     void db.table("routinePlans").toArray().then((rows) => {
       setPlanAheadItems(rows as PlanAheadItem[]);
     }).catch(() => {
@@ -619,7 +655,7 @@ function App() {
   }, [selectedCalendarDay, monthlyRealBalance]);
   const todaySpent = budgetSnapshot.todaySpent;
   const todayRemaining = budgetSnapshot.todayRemaining;
-  const streakDays = useMemo(() => {
+  const { streakDays, streakCarryDays, streakAtRisk } = useMemo(() => {
     const activityDays = new Set<string>();
     for (const tx of transactions) {
       const d = parseISO(tx.date);
@@ -642,14 +678,29 @@ function App() {
       dayRating != null;
     if (routineLiveToday) activityDays.add(tkLive);
 
-    let streak = 0;
     const todayStart = startOfDay(liveNow);
+    let streakDaysCount = 0;
     for (let i = 0; i < 366 * 8; i += 1) {
       const key = format(subDays(todayStart, i), "yyyy-MM-dd");
       if (!activityDays.has(key)) break;
-      streak += 1;
+      streakDaysCount += 1;
     }
-    return streak;
+
+    let streakCarryDaysCount = 0;
+    for (let i = 1; i < 366 * 8; i += 1) {
+      const key = format(subDays(todayStart, i), "yyyy-MM-dd");
+      if (!activityDays.has(key)) break;
+      streakCarryDaysCount += 1;
+    }
+
+    const todayHasCredit = activityDays.has(tkLive);
+    const streakAtRiskFlag = streakCarryDaysCount >= 1 && !todayHasCredit;
+
+    return {
+      streakDays: streakDaysCount,
+      streakCarryDays: streakCarryDaysCount,
+      streakAtRisk: streakAtRiskFlag,
+    };
   }, [transactions, routineHistory, liveNow, timelineEvents, tasks, meals, dayRating]);
   /** Hue shifts once per calendar day so the streak badge feels fresh daily. */
   const streakIconSurfaceStyle = useMemo((): CSSProperties => {
@@ -963,6 +1014,49 @@ function App() {
       }),
     }).catch(() => {});
   }, [notifState, transactions.length, todayRemaining]);
+  useEffect(() => {
+    if (!streakProtectionEnabled || notifState !== "granted" || !pushConnected || !streakAtRisk) return;
+    const dayKey = format(new Date(), "yyyy-MM-dd");
+    let skip = false;
+    try {
+      skip = localStorage.getItem("zero_streak_protect_sched_v1") === dayKey;
+    } catch {
+      // ignore
+    }
+    if (skip) return;
+
+    const nowMs = Date.now();
+    const anchor = new Date();
+    const evening = new Date(anchor);
+    evening.setHours(20, 0, 0, 0);
+    let delayMs = evening.getTime() - nowMs;
+    if (delayMs <= 0) {
+      const late = new Date(anchor);
+      late.setHours(22, 45, 0, 0);
+      delayMs = late.getTime() - nowMs;
+    }
+    if (delayMs <= 0) delayMs = 90_000;
+    if (delayMs > 24 * 60 * 60 * 1000) return;
+
+    void fetch("/api/schedule-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "streak_protect",
+        data: { streakDays: streakCarryDays },
+        delayMs: Math.floor(delayMs),
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) return;
+        try {
+          localStorage.setItem("zero_streak_protect_sched_v1", dayKey);
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {});
+  }, [streakProtectionEnabled, notifState, pushConnected, streakAtRisk, streakCarryDays]);
   const weeklyDueBills = useMemo(
     () => upcoming.filter((bill) => {
       const daysAway = differenceInCalendarDays(parseISO(bill.dueDate), startOfDay(new Date()));
@@ -1741,6 +1835,24 @@ function App() {
     };
   }, []);
 
+  const bioLockSupported = bioLockIsSupported();
+
+  if (bioLockNeedsChallenge && !bioLockUnlocked) {
+    return (
+      <BiometricLockScreen
+        onUnlocked={() => setBioLockUnlocked(true)}
+        onResetLock={() => {
+          const ok = window.confirm("Reset Face ID lock? You can turn it on again in Settings.");
+          if (!ok) return;
+          bioLockClear();
+          setBioLockFeatureEnabled(false);
+          setBioLockCredentialPresent(false);
+          setBioLockUnlocked(true);
+        }}
+      />
+    );
+  }
+
   if (loading || !settings) return <div className="screen"><div className="skeleton large" /><div className="skeleton" /><div className="skeleton" /></div>;
 
   return (
@@ -1791,6 +1903,11 @@ function App() {
               )}
             </div>
           </div>
+          {streakAtRisk && (
+            <p className="streak-protect-banner" role="status">
+              Streak protection: <strong>{streakCarryDays}-day</strong> run needs today&apos;s touch — log a transaction or Routine item before midnight.
+            </p>
+          )}
         </div>
         <p className="muted">{format(new Date(), "EEEE, MMM d")}</p>
       </header>
@@ -2596,8 +2713,87 @@ function App() {
             </section>
 
             <section className="card settings-card">
+              <p className="settings-kicker">Privacy</p>
+              <h3>Face ID lock</h3>
+              <p className="muted">
+                {bioLockSupported
+                  ? bioLockPlatformReady
+                    ? "Use Face ID, Touch ID, or device PIN when opening Zero (HTTPS required)."
+                    : "Uses Web Authentication on this device when available — try Enable below."
+                  : "Requires HTTPS (or localhost for testing) and a compatible browser."}
+              </p>
+              {bioLockCredentialPresent ? (
+                <div className="settings-actions settings-actions-stack">
+                  <p className="muted">
+                    App lock is <strong>on</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      const ok = window.confirm(
+                        "Turn off Face ID lock? Anyone who has this device can open Zero.",
+                      );
+                      if (!ok) return;
+                      bioLockClear();
+                      setBioLockFeatureEnabled(false);
+                      setBioLockCredentialPresent(false);
+                      setBioLockUnlocked(true);
+                      setBioLockUiHint("Face ID lock is off.");
+                    }}
+                  >
+                    Turn off Face ID lock
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    disabled={!bioLockSupported}
+                    onClick={() => {
+                      void (async () => {
+                        setBioLockUiHint("");
+                        const r = await bioLockRegister();
+                        switch (r.ok) {
+                          case true:
+                            setBioLockFeatureEnabled(true);
+                            setBioLockCredentialPresent(true);
+                            setBioLockUnlocked(true);
+                            setBioLockUiHint("Face ID lock is on.");
+                            break;
+                          case false:
+                            setBioLockUiHint(r.message);
+                            break;
+                          default:
+                            break;
+                        }
+                      })();
+                    }}
+                  >
+                    Enable Face ID lock
+                  </button>
+                </div>
+              )}
+              {bioLockUiHint ? <p className="muted">{bioLockUiHint}</p> : null}
+            </section>
+
+            <section className="card settings-card">
               <p className="settings-kicker">Notifications</p>
               <h3>Alerts and reminders</h3>
+              <div className="settings-actions settings-streak-protection-row">
+                <div className="settings-streak-protection-copy">
+                  <strong>Streak protection</strong>
+                  <span className="muted">Notifies you before a multi-day streak drops if today isn&apos;t logged yet.</span>
+                </div>
+                <label className="ios-switch">
+                  <input
+                    type="checkbox"
+                    checked={streakProtectionEnabled}
+                    onChange={(e) => setStreakProtectionEnabled(e.target.checked)}
+                  />
+                  <span />
+                </label>
+              </div>
               <div className="settings-actions">
                 <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
                 <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
