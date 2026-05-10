@@ -21,6 +21,26 @@ export type Subscription = {
   createdAt: string;
 };
 
+/** Push types aligned with server `buildNotification` keys. */
+export type PushNotificationKind =
+  | "bill_due_tomorrow"
+  | "bill_due_today"
+  | "over_budget"
+  | "daily_allowance_morning"
+  | "savings"
+  | "task_still_open"
+  | "morning_briefing"
+  | "streak_protect"
+  | "custom";
+
+/** Optional title/body overrides per push kind (placeholders same as server templates). */
+export type PushNotificationMessageOverride = {
+  title?: string;
+  body?: string;
+};
+
+export type PushNotificationMessages = Partial<Record<PushNotificationKind, PushNotificationMessageOverride>>;
+
 export type Settings = {
   id: number;
   profileName?: string;
@@ -29,6 +49,8 @@ export type Settings = {
   reservedSavings: number;
   monthlyTargets: Record<string, number>;
   categoryLimits: Record<string, number>;
+  /** Custom wording for web push; synced to server with notification context. */
+  pushNotificationMessages?: PushNotificationMessages;
 };
 
 export type CategoryRule = {

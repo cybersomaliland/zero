@@ -185,6 +185,65 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   font-size: 12px;
   line-height: 1.35;
 }
+.notification-copy-details {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary, #f4f7fc);
+  box-shadow: inset 0 0 0 1px var(--border, #e2e8f0);
+}
+.notification-copy-summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+.notification-copy-intro {
+  margin: 8px 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.notification-copy-list {
+  display: grid;
+  gap: 12px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 10px;
+}
+.notification-copy-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--bg-secondary, #fff);
+  box-shadow: inset 0 0 0 1px var(--border, #e8eef5);
+}
+.notification-copy-row-head {
+  display: grid;
+  gap: 2px;
+}
+.notification-copy-row-head strong {
+  font-size: 13px;
+}
+.notification-copy-row-head .muted {
+  font-size: 11px;
+}
+.notification-copy-label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.notification-copy-label input,
+.notification-copy-label textarea {
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.notification-copy-clear {
+  justify-self: start;
+}
+.notification-copy-reset-all {
+  margin-top: 4px;
+}
 .streak-protect-banner {
   margin: 10px 0 0;
   padding: 9px 11px;

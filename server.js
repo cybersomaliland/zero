@@ -36,6 +36,7 @@ const latestNotificationContext = {
   subscriptions: [],
   routine: { currentBlock: "", nextBlock: "", nextBlockTime: "" },
   badge: { billsDueThisWeek: 0, highPriorityOpenTasks: 0, overBudgetDays: 0 },
+  pushNotificationMessages: {},
 };
 const MAX_QUESTION_LENGTH = 800;
 const MAX_CHAT_ITEMS = 12;
@@ -175,6 +176,45 @@ function interpolateTemplate(template, data) {
   });
 }
 
+const PUSH_MESSAGE_KEYS = new Set([
+  "bill_due_tomorrow",
+  "bill_due_today",
+  "over_budget",
+  "daily_allowance_morning",
+  "savings",
+  "task_still_open",
+  "morning_briefing",
+  "streak_protect",
+  "custom",
+]);
+
+function sanitizePushNotificationMessages(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [key, val] of Object.entries(raw)) {
+    if (!PUSH_MESSAGE_KEYS.has(key)) continue;
+    if (!val || typeof val !== "object") continue;
+    const title = typeof val.title === "string" ? val.title.trim().slice(0, 120) : "";
+    const body = typeof val.body === "string" ? val.body.trim().slice(0, 600) : "";
+    if (!title && !body) continue;
+    out[key] = {};
+    if (title) out[key].title = title;
+    if (body) out[key].body = body;
+  }
+  return out;
+}
+
+function getPushCopyOverride(type) {
+  const map = latestNotificationContext.pushNotificationMessages;
+  if (!map || typeof map !== "object") return null;
+  const row = map[type];
+  if (!row || typeof row !== "object") return null;
+  const title = typeof row.title === "string" ? row.title.trim() : "";
+  const body = typeof row.body === "string" ? row.body.trim() : "";
+  if (!title && !body) return null;
+  return { title: title || null, body: body || null };
+}
+
 function pickTemplate(type, templates) {
   if (!Array.isArray(templates) || templates.length === 0) return "";
   let idx = Math.floor(Math.random() * templates.length);
@@ -194,6 +234,16 @@ function buildNotification(type, data = {}) {
   const tasksCount = Number(data.tasksCount || data.openTasks || 0);
   const block = compactLabel(data.block || data.nextBlock || "Focus block", "Focus block");
   const time = String(data.time || data.nextBlockTime || "9:00").trim() || "9:00";
+  const streakDaysVal = Number(data.streakDays ?? data.day ?? 0);
+  const interpPayload = {
+    Bill: bill,
+    amount,
+    task,
+    X: String(type === "streak_protect" ? Math.max(1, streakDaysVal || 1) : day || tasksCount || 1),
+    block,
+    time,
+    message: String(data.message || ""),
+  };
 
   const variants = {
     bill_due_tomorrow: [
@@ -258,19 +308,21 @@ function buildNotification(type, data = {}) {
     custom: compactLabel(data.title, "Update"),
   };
 
-  const template = pickTemplate(type, variants[type] || variants.custom);
-  const streakDaysVal = Number(data.streakDays ?? data.day ?? 0);
-  const bodyRaw = interpolateTemplate(template, {
-    Bill: bill,
-    amount,
-    task,
-    X: String(type === "streak_protect" ? Math.max(1, streakDaysVal || 1) : day || tasksCount || 1),
-    block,
-    time,
-    message: String(data.message || ""),
-  }).replace(FORBIDDEN_WORDS, "").trim();
+  const override = getPushCopyOverride(type);
+  const template = override?.body
+    ? override.body.slice(0, 600)
+    : pickTemplate(type, variants[type] || variants.custom);
+  const bodyRaw = interpolateTemplate(template, interpPayload).replace(FORBIDDEN_WORDS, "").trim();
 
-  const title = trimWords(String(titles[type] || "Update").replace(FORBIDDEN_WORDS, ""), 5);
+  let title;
+  if (override?.title) {
+    title = trimWords(
+      interpolateTemplate(override.title.slice(0, 120), interpPayload).replace(FORBIDDEN_WORDS, "").trim(),
+      8,
+    );
+  } else {
+    title = trimWords(String(titles[type] || "Update").replace(FORBIDDEN_WORDS, ""), 5);
+  }
   const body = trimWords(bodyRaw, 10);
 
   return {
@@ -438,6 +490,11 @@ app.post("/api/notification-context", (req, res) => {
       highPriorityOpenTasks: Math.max(0, Math.round(Number(incoming.badge.highPriorityOpenTasks) || 0)),
       overBudgetDays: Math.max(0, Math.round(Number(incoming.badge.overBudgetDays) || 0)),
     };
+  }
+  if (incoming.pushNotificationMessages !== undefined) {
+    latestNotificationContext.pushNotificationMessages = sanitizePushNotificationMessages(
+      incoming.pushNotificationMessages,
+    );
   }
   return res.status(200).json({ ok: true });
 });

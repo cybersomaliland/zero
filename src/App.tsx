@@ -30,7 +30,8 @@ import {
   bioLockReadEnabled,
   bioLockRegister,
 } from "./webauthnLock";
-import type { Subscription, SubscriptionCycle, TxType } from "./types";
+import { PUSH_NOTIFICATION_KIND_META } from "./pushNotificationCopy";
+import type { PushNotificationKind, Subscription, SubscriptionCycle, TxType } from "./types";
 
 /** Background refresh while the app is open (Open-Meteo updates on model cadence; this keeps UI current). */
 const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -1053,6 +1054,40 @@ function App() {
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
+
+  const patchPushNotificationMessage = useCallback(
+    (id: PushNotificationKind, patch: { title?: string; body?: string }) => {
+      const prevAll = settings?.pushNotificationMessages ?? {};
+      const merged = { ...prevAll[id], ...patch };
+      const titleTrim = (merged.title ?? "").trim();
+      const bodyTrim = (merged.body ?? "").trim();
+      const next = { ...prevAll };
+      if (!titleTrim && !bodyTrim) {
+        delete next[id];
+      } else {
+        next[id] = {
+          ...(titleTrim ? { title: titleTrim } : {}),
+          ...(bodyTrim ? { body: bodyTrim } : {}),
+        };
+      }
+      updateSettings({
+        pushNotificationMessages: Object.keys(next).length > 0 ? next : {},
+      });
+    },
+    [settings, updateSettings],
+  );
+
+  const clearPushNotificationMessage = useCallback(
+    (id: PushNotificationKind) => {
+      const prevAll = { ...(settings?.pushNotificationMessages ?? {}) };
+      delete prevAll[id];
+      updateSettings({
+        pushNotificationMessages: Object.keys(prevAll).length > 0 ? prevAll : {},
+      });
+    },
+    [settings, updateSettings],
+  );
+
   useEffect(() => {
     if (notifState !== "granted") return;
     const badge =
@@ -1082,6 +1117,7 @@ function App() {
             : "",
         },
         badge,
+        pushNotificationMessages: settings?.pushNotificationMessages ?? {},
       }),
     }).catch(() => {});
   }, [
@@ -2914,6 +2950,59 @@ function App() {
                   <span />
                 </label>
               </div>
+
+              <details className="notification-copy-details">
+                <summary className="notification-copy-summary">Customize push wording</summary>
+                <p className="muted notification-copy-intro">
+                  Optional titles and message bodies for each alert type. Leave blank to use the built-in rotating lines.
+                  Placeholders get filled when the notification is sent.
+                </p>
+                <div className="notification-copy-list">
+                  {PUSH_NOTIFICATION_KIND_META.map((meta) => {
+                    const row = settings.pushNotificationMessages?.[meta.id];
+                    const hasCustom = Boolean((row?.title ?? "").trim() || (row?.body ?? "").trim());
+                    return (
+                      <div key={meta.id} className="notification-copy-row">
+                        <div className="notification-copy-row-head">
+                          <strong>{meta.label}</strong>
+                          <span className="muted">{meta.hint}</span>
+                        </div>
+                        <label className="notification-copy-label">
+                          Title <span className="muted">(optional)</span>
+                          <input
+                            type="text"
+                            value={row?.title ?? ""}
+                            placeholder="App default"
+                            onChange={(e) => patchPushNotificationMessage(meta.id, { title: e.target.value })}
+                          />
+                        </label>
+                        <label className="notification-copy-label">
+                          Message <span className="muted">(optional)</span>
+                          <textarea
+                            rows={2}
+                            value={row?.body ?? ""}
+                            placeholder="App default"
+                            onChange={(e) => patchPushNotificationMessage(meta.id, { body: e.target.value })}
+                          />
+                        </label>
+                        {hasCustom ? (
+                          <button type="button" className="ghost-btn notification-copy-clear" onClick={() => clearPushNotificationMessage(meta.id)}>
+                            Reset this type
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className="ghost-btn notification-copy-reset-all"
+                  onClick={() => updateSettings({ pushNotificationMessages: {} })}
+                >
+                  Reset all custom wording
+                </button>
+              </details>
+
               <div className="settings-actions">
                 <button type="button" onClick={() => { void enableNotifications(); }}>Enable notifications</button>
                 <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
