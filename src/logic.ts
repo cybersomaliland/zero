@@ -1,4 +1,21 @@
-import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, endOfMonth, endOfWeek, format, getDaysInMonth, isSameMonth, isSameWeek, parseISO, startOfDay } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  addWeeks,
+  addYears,
+  differenceInCalendarDays,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  getDaysInMonth,
+  isSameMonth,
+  isSameWeek,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+  startOfWeek,
+} from "date-fns";
 import { inferCategoryFromText } from "./categories";
 import type { Settings, Subscription, Transaction } from "./types";
 
@@ -94,6 +111,35 @@ export function getDueStatus(date: string) {
   if (days <= 3) return "due";
   if (days <= 10) return "soon";
   return "future";
+}
+
+/** Bills (subscriptions) with a due date in the current Saturday-start week. */
+export function countSubscriptionsDueThisWeek(subscriptions: Subscription[], referenceDate = new Date()) {
+  const weekStart = startOfWeek(referenceDate, { weekStartsOn: WEEK_STARTS_ON });
+  const weekEnd = endOfWeek(referenceDate, { weekStartsOn: WEEK_STARTS_ON });
+  return subscriptions.filter((sub) => {
+    const due = startOfDay(parseISO(sub.nextBillingDate));
+    return due >= weekStart && due <= weekEnd;
+  }).length;
+}
+
+/** Calendar days from month start through today where daily allowance went negative. */
+export function countOverBudgetDaysInMonth(
+  transactions: Transaction[],
+  subscriptions: Subscription[],
+  settings: Settings,
+  referenceDate = new Date(),
+) {
+  const monthStart = startOfMonth(referenceDate);
+  const today = startOfDay(referenceDate);
+  const monthEnd = endOfMonth(referenceDate);
+  const intervalEnd = today <= monthEnd ? today : monthEnd;
+  let count = 0;
+  for (const d of eachDayOfInterval({ start: monthStart, end: intervalEnd })) {
+    const snap = computeBudgetSnapshot(transactions, subscriptions, settings, d);
+    if (snap.todayRemaining < 0) count += 1;
+  }
+  return count;
 }
 
 export function getUpcomingBills(subscriptions: Subscription[], days = 60) {

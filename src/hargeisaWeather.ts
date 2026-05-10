@@ -1,6 +1,8 @@
 /**
  * Hargeisa forecast via Open-Meteo (free, no API key).
- * Docs: https://open-meteo.com/en/docs — ECMWF / GFS blend at ~11 km.
+ * Docs: https://open-meteo.com/en/docs — per-location blend of national/global models.
+ * `fetchedAt` is when we received this snapshot (use for “last updated”); `currentTimeIso`
+ * is the provider’s analysis time for current conditions.
  */
 
 const HARGEISA_LAT = 9.5616;
@@ -62,7 +64,7 @@ export async function fetchHargeisaWeather(signal?: AbortSignal): Promise<Hargei
   });
 
   const url = `https://api.open-meteo.com/v1/forecast?${params}`;
-  const res = await fetch(url, { signal });
+  const res = await fetch(url, { signal, cache: "no-store" });
   if (!res.ok) return null;
 
   const data = (await res.json()) as {

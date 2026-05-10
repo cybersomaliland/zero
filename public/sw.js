@@ -69,11 +69,29 @@ self.addEventListener("push", (event) => {
   const options = {
     body: payload.body || "Open Zero to review your money and routine.",
     icon: payload.icon || "/icon.svg",
-    badge: payload.badge || "/icon.svg",
+    badge: typeof payload.badge === "string" ? payload.badge : "/icon.svg",
     tag: payload.tag || "zero-push",
     data: { url: payload.url || "/" },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  const rawBadge = payload.badgeCount ?? (typeof payload.badge === "number" ? payload.badge : null);
+  const badgeCount = typeof rawBadge === "number" && Number.isFinite(rawBadge) ? Math.round(rawBadge) : null;
+
+  event.waitUntil(
+    (async () => {
+      await self.registration.showNotification(title, options);
+      if (badgeCount === null) return;
+      try {
+        if (!("setAppBadge" in navigator)) return;
+        if (badgeCount <= 0) {
+          if ("clearAppBadge" in navigator) await navigator.clearAppBadge();
+          return;
+        }
+        await navigator.setAppBadge(badgeCount);
+      } catch {
+        // ignore
+      }
+    })(),
+  );
 });
 
 self.addEventListener("fetch", (event) => {

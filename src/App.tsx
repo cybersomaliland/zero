@@ -5,13 +5,23 @@ import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
-import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money, simulateWhatIfScenario } from "./logic";
+import {
+  askFinanceAssistant,
+  computeBudgetSnapshot,
+  countOverBudgetDaysInMonth,
+  countSubscriptionsDueThisWeek,
+  forecast,
+  getUpcomingBills,
+  money,
+  simulateWhatIfScenario,
+} from "./logic";
 import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
 import { BiometricLockScreen } from "./BiometricLockScreen";
 import { IosDayTimeline } from "./IosDayTimeline";
 import { useZeroStore } from "./store";
+import { clearBadge, updateBadge } from "./utils/badge";
 import {
   bioLockClear,
   bioLockIsSupported,
@@ -21,6 +31,11 @@ import {
   bioLockRegister,
 } from "./webauthnLock";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
+
+/** Background refresh while the app is open (Open-Meteo updates on model cadence; this keeps UI current). */
+const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+/** When returning to the tab/window, refresh if last sync is older than this. */
+const WEATHER_STALE_AFTER_MS = 5 * 60 * 1000;
 
 const tabs = ["Home", "Transactions", "Subscriptions", "Insights", "Settings"] as const;
 type Tab = (typeof tabs)[number];
@@ -122,9 +137,20 @@ function App() {
   const [weatherBrief, setWeatherBrief] = useState<HargeisaWeatherBrief | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState("");
+  const weatherBriefRef = useRef<HargeisaWeatherBrief | null>(null);
+  const weatherFetchAbortRef = useRef<AbortController | null>(null);
   const [regionalBriefExpanded, setRegionalBriefExpanded] = useState(() => {
     try {
       const s = localStorage.getItem("zero_regional_brief_expanded_v2");
+      return s === "1";
+    } catch {
+      // ignore
+    }
+    return false;
+  });
+  const [moneyThisWeekExpanded, setMoneyThisWeekExpanded] = useState(() => {
+    try {
+      const s = localStorage.getItem("zero_money_this_week_expanded_v1");
       return s === "1";
     } catch {
       // ignore
@@ -169,6 +195,8 @@ function App() {
   const [showReminderSheet, setShowReminderSheet] = useState(false);
   const [meals, setMeals] = useState<Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>>([]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
   const [checklistDraft, setChecklistDraft] = useState<{
     title: string;
     priority: TaskPriority;
@@ -242,6 +270,45 @@ function App() {
   );
   const [bioLockUiHint, setBioLockUiHint] = useState("");
   const [bioLockPlatformReady, setBioLockPlatformReady] = useState(false);
+
+  const syncAppBadge = useCallback(() => {
+    const { transactions: tx, subscriptions: subs, settings: set } = useZeroStore.getState();
+    if (!set) return;
+    const taskList = tasksRef.current;
+    const bills = countSubscriptionsDueThisWeek(subs);
+    const highOpen = taskList.filter((t) => !t.done && t.priority === "high").length;
+    const overDays = countOverBudgetDaysInMonth(tx, subs, set);
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      clearBadge();
+      return;
+    }
+    updateBadge(bills, highOpen, overDays);
+  }, []);
+
+  useEffect(() => {
+    clearBadge();
+  }, []);
+
+  useEffect(() => {
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") clearBadge();
+    };
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+    window.addEventListener("focus", onFocusOrVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+      window.removeEventListener("focus", onFocusOrVisible);
+    };
+  }, []);
+
+  useEffect(() => {
+    syncAppBadge();
+    return useZeroStore.subscribe(syncAppBadge);
+  }, [syncAppBadge]);
+
+  useEffect(() => {
+    syncAppBadge();
+  }, [tasks, syncAppBadge]);
 
   useEffect(() => {
     void bioLockPlatformAuthenticatorAvailable().then(setBioLockPlatformReady);
@@ -484,6 +551,16 @@ function App() {
   }, [regionalBriefExpanded]);
   useEffect(() => {
     try {
+      localStorage.setItem(
+        "zero_money_this_week_expanded_v1",
+        moneyThisWeekExpanded ? "1" : "0",
+      );
+    } catch {
+      // ignore
+    }
+  }, [moneyThisWeekExpanded]);
+  useEffect(() => {
+    try {
       localStorage.setItem("zero_streak_protection_v1", streakProtectionEnabled ? "1" : "0");
     } catch {
       // ignore
@@ -525,12 +602,63 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    weatherBriefRef.current = weatherBrief;
+  }, [weatherBrief]);
+
+  const refreshWeather = useCallback(async (opts?: { background?: boolean; signal?: AbortSignal }) => {
+    const inherited = opts?.signal;
+    const hadData = weatherBriefRef.current != null;
+    const background = Boolean(opts?.background && hadData);
+
+    let signal: AbortSignal;
+    if (inherited) {
+      signal = inherited;
+    } else {
+      weatherFetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      weatherFetchAbortRef.current = controller;
+      signal = controller.signal;
+    }
+
+    if (!background) {
+      setWeatherLoading(true);
+      setWeatherError("");
+    }
+
+    try {
+      const w = await fetchHargeisaWeather(signal);
+      if (signal.aborted) return;
+
+      if (w) {
+        setWeatherBrief(w);
+        if (!background) setWeatherError("");
+      } else if (!background) {
+        setWeatherBrief(null);
+        setWeatherError("Forecast unavailable.");
+      }
+    } catch {
+      if (signal.aborted) return;
+      if (!background) {
+        setWeatherBrief(null);
+        setWeatherError("Forecast unavailable.");
+      }
+    } finally {
+      if (!background) setWeatherLoading(false);
+    }
+  }, []);
+
   const refreshRegionalBrief = useCallback(async () => {
+    weatherFetchAbortRef.current?.abort();
     const controller = new AbortController();
+    weatherFetchAbortRef.current = controller;
+
     setNewsLoading(true);
     setWeatherLoading(true);
     setNewsError("");
     setWeatherError("");
+
     await Promise.all([
       fetchSomalilandNews(controller.signal)
         .then((items) => {
@@ -546,22 +674,38 @@ function App() {
           );
         })
         .finally(() => setNewsLoading(false)),
-      fetchHargeisaWeather(controller.signal)
-        .then((w) => {
-          setWeatherBrief(w);
-          if (!w) setWeatherError("Forecast unavailable.");
-        })
-        .catch(() => {
-          setWeatherBrief(null);
-          setWeatherError("Forecast unavailable.");
-        })
-        .finally(() => setWeatherLoading(false)),
+      refreshWeather({ signal: controller.signal }),
     ]);
-  }, []);
+  }, [refreshWeather]);
 
   useEffect(() => {
     void refreshRegionalBrief();
   }, [refreshRegionalBrief]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void refreshWeather({ background: true });
+    }, WEATHER_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [refreshWeather]);
+
+  useEffect(() => {
+    const maybeRefreshWeather = () => {
+      if (document.visibilityState !== "visible") return;
+      const brief = weatherBriefRef.current;
+      if (!brief) return;
+      const fetchedMs = Date.parse(brief.fetchedAt);
+      if (!Number.isFinite(fetchedMs)) return;
+      if (Date.now() - fetchedMs <= WEATHER_STALE_AFTER_MS) return;
+      void refreshWeather({ background: true });
+    };
+    document.addEventListener("visibilitychange", maybeRefreshWeather);
+    window.addEventListener("focus", maybeRefreshWeather);
+    return () => {
+      document.removeEventListener("visibilitychange", maybeRefreshWeather);
+      window.removeEventListener("focus", maybeRefreshWeather);
+    };
+  }, [refreshWeather]);
 
   const budgetSnapshot = useMemo(() => {
     if (!settings) {
@@ -839,7 +983,7 @@ function App() {
     if (todayRemaining < 0) return `You've gone ${money(Math.abs(todayRemaining))} over today. Keep tomorrow lighter.`;
     return `You're on track. ${money(todayRemaining)} left for today.`;
   }, [todaySpent, todayRemaining]);
-  const weeklyReviewReport = useMemo(() => {
+  const moneyThisWeek = useMemo(() => {
     const weekStartsOn = 6 as const;
     const now = new Date();
     const thisWeekStart = startOfWeek(now, { weekStartsOn });
@@ -875,113 +1019,50 @@ function App() {
         }, {}),
     ).sort((a, b) => b[1] - a[1])[0];
 
-    const todayKey = format(now, "yyyy-MM-dd");
-    const liveTodaySnapshot: RoutineDaySnapshot = {
-      timelineEvents,
-      tasks,
-      meals,
-      ritualEnergy,
-      dayRating,
-    };
-
-    const thisWeekSnapByDay = new Map(
-      Object.entries(routineHistory)
-        .filter(([day]) => dateInInterval(day, thisWeekInterval))
-        .map(([day, snapshot]) => [day, snapshot]),
-    );
-    if (dateInInterval(todayKey, thisWeekInterval)) {
-      thisWeekSnapByDay.set(todayKey, liveTodaySnapshot);
-    }
-    const thisWeekSnaps = [...thisWeekSnapByDay.entries()].map(([day, snapshot]) => ({ day, snapshot }));
-
-    const prevWeekSnaps = Object.entries(routineHistory)
-      .filter(([day]) => dateInInterval(day, prevWeekInterval))
-      .map(([day, snapshot]) => ({ day, snapshot }));
-
-    const completionStats = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
-      const ratios = items
-        .map(({ snapshot }) => {
-          const total = snapshot.tasks.length;
-          if (total === 0) return null;
-          const done = snapshot.tasks.filter((t) => t.done).length;
-          return done / total;
-        })
-        .filter((v): v is number => v !== null);
-      if (ratios.length === 0) return { avg: 0, daysWithTasks: 0 };
-      return {
-        avg: ratios.reduce((sum, v) => sum + v, 0) / ratios.length,
-        daysWithTasks: ratios.length,
-      };
-    };
-
-    const ratingStats = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
-      const ratings = items.reduce<number[]>((acc, { snapshot }) => {
-        if (typeof snapshot.dayRating === "number") acc.push(snapshot.dayRating);
-        return acc;
-      }, []);
-      if (ratings.length === 0) return { avg: 0, daysRated: 0 };
-      return {
-        avg: ratings.reduce((sum, v) => sum + v, 0) / ratings.length,
-        daysRated: ratings.length,
-      };
-    };
-
-    const thisCompletion = completionStats(thisWeekSnaps);
-    const prevCompletion = completionStats(prevWeekSnaps);
-    const thisRating = ratingStats(thisWeekSnaps);
-    const prevRating = ratingStats(prevWeekSnaps);
-
-    const routineDaysWithActivity = thisWeekSnaps.filter(
-      ({ snapshot }) =>
-        snapshot.tasks.length > 0 ||
-        snapshot.meals.length > 0 ||
-        snapshot.timelineEvents.length > 0 ||
-        typeof snapshot.dayRating === "number",
-    ).length;
-
     const weekRange = `${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")}`;
-    const moneyLine =
-      `Spent ${money(thisTotals.spent)} · Income logged ${money(thisTotals.income)}` +
-      (thisTopCategory ? ` · Top category: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).` : ".");
+    const snapshotLine =
+      `Week-to-date: ${money(thisTotals.spent)} out · ${money(thisTotals.income)} income logged` +
+      (thisTopCategory ? ` · largest bucket: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).` : ".");
 
-    const routineBits: string[] = [];
-    if (routineDaysWithActivity > 0) routineBits.push(`${routineDaysWithActivity} active days`);
-    if (thisCompletion.daysWithTasks > 0) routineBits.push(`~${Math.round(thisCompletion.avg * 100)}% tasks`);
-    if (thisRating.daysRated > 0) routineBits.push(`${thisRating.avg.toFixed(1)}/5 mood`);
-    const routineLine =
-      routineBits.length > 0 ? `${routineBits.join(" · ")}.` : "No routine saved yet — log today in Routine.";
+    const daysLeftWeek = Math.max(0, budgetSnapshot.daysLeftInWeek);
+    const paceLine =
+      safePerDay <= 0
+        ? "Set money details in Settings to estimate runway from your daily allowance."
+        : daysLeftWeek <= 0
+          ? `Your allowance is about ${money(safePerDay)}/day — week window closing; carry discipline into next week.`
+          : `Rough runway: ~${money(safePerDay * daysLeftWeek)} across ${daysLeftWeek} day(s) left if you stay near ${money(safePerDay)}/day (approx.).`;
 
-    let takeawayLine = "Keep the same rhythm — small habits add up.";
+    let takeawayLine = "Keep logging expenses so this weekly snapshot stays honest.";
     if (thisTotals.income <= 0 && thisTotals.spent > 0) {
-      takeawayLine = "Log income too so weekly totals stay meaningful.";
+      takeawayLine = "Log income entries too — spend vs income only works with both sides.";
     } else if (thisTotals.income > 0 && thisTotals.spent > thisTotals.income) {
-      takeawayLine = "Spend passed logged income — check categories or entries.";
+      takeawayLine = "Spend passed logged income this week — review categories.";
     } else if (prevTotals.spent > 0 && thisTotals.spent + 0.005 < prevTotals.spent) {
-      takeawayLine = `Spend down about ${money(prevTotals.spent - thisTotals.spent)} vs last week.`;
-    } else if (
-      thisCompletion.daysWithTasks > 0 &&
-      prevCompletion.daysWithTasks > 0 &&
-      thisCompletion.avg > prevCompletion.avg
-    ) {
-      takeawayLine = `Tasks up: ${Math.round(prevCompletion.avg * 100)}% → ${Math.round(thisCompletion.avg * 100)}% avg completion.`;
-    } else if (thisRating.daysRated > 0 && prevRating.daysRated > 0 && thisRating.avg > prevRating.avg) {
-      takeawayLine = `Mood avg up (${prevRating.avg.toFixed(1)} → ${thisRating.avg.toFixed(1)}).`;
+      takeawayLine = `Spend down about ${money(prevTotals.spent - thisTotals.spent)} vs last week — nice slack.`;
     } else if (thisTopCategory) {
-      takeawayLine = `Next week: trim ${thisTopCategory[0]} if you can.`;
+      takeawayLine = `Soft goal: ease ${thisTopCategory[0]} next few days to protect runway.`;
     }
 
     return {
       weekRange,
-      moneyLine,
-      routineLine,
+      snapshotLine,
+      paceLine,
       takeawayLine,
     };
-  }, [transactions, routineHistory, timelineEvents, tasks, meals, dayRating, ritualEnergy]);
+  }, [transactions, budgetSnapshot.daysLeftInWeek, safePerDay]);
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
   useEffect(() => {
     if (notifState !== "granted") return;
+    const badge =
+      settings == null
+        ? { billsDueThisWeek: 0, highPriorityOpenTasks: 0, overBudgetDays: 0 }
+        : {
+            billsDueThisWeek: countSubscriptionsDueThisWeek(subscriptions),
+            highPriorityOpenTasks: tasks.filter((t) => !t.done && t.priority === "high").length,
+            overBudgetDays: countOverBudgetDaysInMonth(transactions, subscriptions, settings),
+          };
     void fetch("/api/notification-context", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1000,9 +1081,21 @@ function App() {
             ? (nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`)
             : "",
         },
+        badge,
       }),
     }).catch(() => {});
-  }, [notifState, todayRemaining, safePerDay, savePlan.savePerDay, tasks, subscriptions, currentTimelineBlock, nextTimelineBlock]);
+  }, [
+    notifState,
+    todayRemaining,
+    safePerDay,
+    savePlan.savePerDay,
+    tasks,
+    subscriptions,
+    transactions,
+    settings,
+    currentTimelineBlock,
+    nextTimelineBlock,
+  ]);
   useEffect(() => {
     if (notifState !== "granted") return;
     void fetch("/api/spending-update", {
@@ -2013,9 +2106,9 @@ function App() {
                         ) : null;
                       })()}
                       <p className="muted weather-updated-foot">
-                        Updated{" "}
+                        Last updated{" "}
                         {(() => {
-                          const t = parseISO(weatherBrief.currentTimeIso);
+                          const t = parseISO(weatherBrief.fetchedAt);
                           return Number.isFinite(+t)
                             ? formatDistanceToNow(t, { addSuffix: true })
                             : "recently";
@@ -2239,14 +2332,41 @@ function App() {
                 </article>
               )}
             </section>
-            <section className="card weekly-review-simple">
-              <div className="row">
-                <h3>Weekly review</h3>
-                <p className="muted">{weeklyReviewReport.weekRange}</p>
+            <section
+              className={`card money-this-week-simple money-this-week-card${moneyThisWeekExpanded ? "" : " money-this-week-card--collapsed"}`}
+              aria-labelledby="money-this-week-heading"
+            >
+              <div className="row regional-brief-top">
+                <div className="regional-brief-title-row">
+                  <button
+                    type="button"
+                    className="regional-brief-collapse-btn"
+                    aria-expanded={moneyThisWeekExpanded}
+                    aria-controls="money-this-week-body"
+                    aria-label={
+                      moneyThisWeekExpanded ? "Collapse Money this week" : "Expand Money this week"
+                    }
+                    onClick={() => setMoneyThisWeekExpanded((v) => !v)}
+                  >
+                    <span className="regional-brief-chevron" aria-hidden />
+                  </button>
+                  <div className="regional-brief-title-copy">
+                    <h3 id="money-this-week-heading" className="regional-brief-title-plain">
+                      Money this week
+                    </h3>
+                  </div>
+                </div>
+                <p className="muted">{moneyThisWeek.weekRange}</p>
               </div>
-              <p className="weekly-review-lead">{weeklyReviewReport.moneyLine}</p>
-              <p className="muted weekly-review-line">{weeklyReviewReport.routineLine}</p>
-              <p className="muted weekly-review-line">{weeklyReviewReport.takeawayLine}</p>
+              <div
+                id="money-this-week-body"
+                className={`money-this-week-body ${moneyThisWeekExpanded ? "is-expanded" : "is-collapsed"}`}
+                aria-hidden={!moneyThisWeekExpanded}
+              >
+                <p className="money-this-week-lead">{moneyThisWeek.snapshotLine}</p>
+                <p className="muted money-this-week-line">{moneyThisWeek.paceLine}</p>
+                <p className="muted money-this-week-line">{moneyThisWeek.takeawayLine}</p>
+              </div>
             </section>
 
             <div className="home-section-head">

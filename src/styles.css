@@ -1588,7 +1588,8 @@ html[data-theme="dark"] .bio-lock-screen {
 .regional-brief-top button.regional-brief-collapse-btn[aria-expanded="false"] .regional-brief-chevron {
   transform: rotate(-45deg);
 }
-.regional-brief-body {
+.regional-brief-body,
+.money-this-week-body {
   display: grid;
   gap: 14px;
   overflow: hidden;
@@ -1597,15 +1598,20 @@ html[data-theme="dark"] .bio-lock-screen {
     opacity 0.26s ease,
     margin-top 0.22s ease;
 }
-.regional-brief-body.is-expanded {
+.regional-brief-body.is-expanded,
+.money-this-week-body.is-expanded {
   max-height: min(2800px, 320vh);
   opacity: 1;
 }
-.regional-brief-body.is-collapsed {
+.regional-brief-body.is-collapsed,
+.money-this-week-body.is-collapsed {
   max-height: 0 !important;
   opacity: 0;
   margin-top: -6px;
   pointer-events: none;
+}
+.money-this-week-body {
+  gap: 0;
 }
 .regional-brief-title-plain {
   margin: 0;
@@ -2776,18 +2782,25 @@ html[data-theme="dark"] .bill-alert-row .live-label {
   display: grid;
   gap: 6px;
 }
-.weekly-review-simple .weekly-review-lead {
+.money-this-week-simple.money-this-week-card {
+  display: grid;
+  gap: 12px;
+}
+.money-this-week-simple.money-this-week-card--collapsed {
+  gap: 0;
+}
+.money-this-week-simple .money-this-week-lead {
   margin: 6px 0 10px;
   font-size: 14px;
   line-height: 1.45;
   color: var(--text-primary, #1e293b);
 }
-.weekly-review-simple .weekly-review-line {
+.money-this-week-simple .money-this-week-line {
   margin: 0 0 8px;
   font-size: 13px;
   line-height: 1.45;
 }
-.weekly-review-simple .weekly-review-line:last-child {
+.money-this-week-simple .money-this-week-line:last-child {
   margin-bottom: 0;
 }
 .morning-coach-quick {

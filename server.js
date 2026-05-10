@@ -35,6 +35,7 @@ const latestNotificationContext = {
   tasks: [],
   subscriptions: [],
   routine: { currentBlock: "", nextBlock: "", nextBlockTime: "" },
+  badge: { billsDueThisWeek: 0, highPriorityOpenTasks: 0, overBudgetDays: 0 },
 };
 const MAX_QUESTION_LENGTH = 800;
 const MAX_CHAT_ITEMS = 12;
@@ -280,9 +281,23 @@ function buildNotification(type, data = {}) {
   };
 }
 
+function totalBadgeCountFromContext() {
+  const b = latestNotificationContext.badge;
+  if (!b || typeof b !== "object") return 0;
+  const bills = Number(b.billsDueThisWeek) || 0;
+  const openHigh = Number(b.highPriorityOpenTasks) || 0;
+  const overDays = Number(b.overBudgetDays) || 0;
+  return Math.max(0, Math.round(bills) + Math.round(openHigh) + Math.round(overDays));
+}
+
 async function sendPushToSubscription(subscription, payload) {
   try {
-    await webpush.sendNotification(subscription, JSON.stringify(payload));
+    const badgeCount = totalBadgeCountFromContext();
+    const body =
+      payload !== null && typeof payload === "object" && !Array.isArray(payload)
+        ? { ...payload, badgeCount }
+        : payload;
+    await webpush.sendNotification(subscription, JSON.stringify(body));
     return { ok: true };
   } catch (error) {
     const statusCode = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 0;
@@ -416,6 +431,13 @@ app.post("/api/notification-context", (req, res) => {
   if (Array.isArray(incoming.subscriptions)) latestNotificationContext.subscriptions = incoming.subscriptions.slice(0, 100);
   if (incoming.routine && typeof incoming.routine === "object") {
     latestNotificationContext.routine = { ...latestNotificationContext.routine, ...incoming.routine };
+  }
+  if (incoming.badge && typeof incoming.badge === "object") {
+    latestNotificationContext.badge = {
+      billsDueThisWeek: Math.max(0, Math.round(Number(incoming.badge.billsDueThisWeek) || 0)),
+      highPriorityOpenTasks: Math.max(0, Math.round(Number(incoming.badge.highPriorityOpenTasks) || 0)),
+      overBudgetDays: Math.max(0, Math.round(Number(incoming.badge.overBudgetDays) || 0)),
+    };
   }
   return res.status(200).json({ ok: true });
 });
