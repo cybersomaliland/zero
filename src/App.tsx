@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subWeeks } from "date-fns";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subDays, subWeeks } from "date-fns";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
 import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money, simulateWhatIfScenario } from "./logic";
+import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
 import { IosDayTimeline } from "./IosDayTimeline";
@@ -109,6 +110,18 @@ function App() {
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
+  const [weatherBrief, setWeatherBrief] = useState<HargeisaWeatherBrief | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState("");
+  const [regionalBriefExpanded, setRegionalBriefExpanded] = useState(() => {
+    try {
+      const s = localStorage.getItem("zero_regional_brief_expanded_v2");
+      return s === "1";
+    } catch {
+      // ignore
+    }
+    return false;
+  });
   const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
@@ -431,6 +444,16 @@ function App() {
     return () => media.removeEventListener("change", onChange);
   }, [themePreference]);
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        "zero_regional_brief_expanded_v2",
+        regionalBriefExpanded ? "1" : "0",
+      );
+    } catch {
+      // ignore
+    }
+  }, [regionalBriefExpanded]);
+  useEffect(() => {
     void db.table("routinePlans").toArray().then((rows) => {
       setPlanAheadItems(rows as PlanAheadItem[]);
     }).catch(() => {
@@ -466,20 +489,43 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
-  const refreshNews = async () => {
+  const refreshRegionalBrief = useCallback(async () => {
     const controller = new AbortController();
     setNewsLoading(true);
+    setWeatherLoading(true);
     setNewsError("");
-    try {
-      const items = await fetchSomalilandNews(controller.signal);
-      setNewsItems(items);
-      if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
-    } catch {
-      setNewsError("News temporarily unavailable.");
-    } finally {
-      setNewsLoading(false);
-    }
-  };
+    setWeatherError("");
+    await Promise.all([
+      fetchSomalilandNews(controller.signal)
+        .then((items) => {
+          setNewsItems(items);
+          if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
+        })
+        .catch(() => {
+          setNewsItems([]);
+          setNewsError(
+            import.meta.env.DEV
+              ? "Headlines need the API server. Run npm run start (port 3000) while vite dev runs."
+              : "Couldn't load headlines.",
+          );
+        })
+        .finally(() => setNewsLoading(false)),
+      fetchHargeisaWeather(controller.signal)
+        .then((w) => {
+          setWeatherBrief(w);
+          if (!w) setWeatherError("Forecast unavailable.");
+        })
+        .catch(() => {
+          setWeatherBrief(null);
+          setWeatherError("Forecast unavailable.");
+        })
+        .finally(() => setWeatherLoading(false)),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    void refreshRegionalBrief();
+  }, [refreshRegionalBrief]);
 
   const budgetSnapshot = useMemo(() => {
     if (!settings) {
@@ -574,19 +620,37 @@ function App() {
   const todaySpent = budgetSnapshot.todaySpent;
   const todayRemaining = budgetSnapshot.todayRemaining;
   const streakDays = useMemo(() => {
-    const txDays = new Set(
-      transactions.map((tx) => format(parseISO(tx.date), "yyyy-MM-dd")),
-    );
+    const activityDays = new Set<string>();
+    for (const tx of transactions) {
+      const d = parseISO(tx.date);
+      if (!Number.isNaN(+d)) activityDays.add(format(d, "yyyy-MM-dd"));
+    }
+    const snapshotSignalsDay = (snap: RoutineDaySnapshot) =>
+      (snap.timelineEvents?.length ?? 0) > 0 ||
+      (snap.tasks?.length ?? 0) > 0 ||
+      (snap.meals?.length ?? 0) > 0 ||
+      snap.dayRating != null;
+    for (const [day, snap] of Object.entries(routineHistory)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      if (snapshotSignalsDay(snap)) activityDays.add(day);
+    }
+    const tkLive = format(liveNow, "yyyy-MM-dd");
+    const routineLiveToday =
+      timelineEvents.some((e) => (e.date ?? tkLive) === tkLive) ||
+      tasks.length > 0 ||
+      meals.length > 0 ||
+      dayRating != null;
+    if (routineLiveToday) activityDays.add(tkLive);
+
     let streak = 0;
-    const cursor = new Date();
-    while (true) {
-      const key = format(cursor, "yyyy-MM-dd");
-      if (!txDays.has(key)) break;
+    const todayStart = startOfDay(liveNow);
+    for (let i = 0; i < 366 * 8; i += 1) {
+      const key = format(subDays(todayStart, i), "yyyy-MM-dd");
+      if (!activityDays.has(key)) break;
       streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
     }
     return streak;
-  }, [transactions]);
+  }, [transactions, routineHistory, liveNow, timelineEvents, tasks, meals, dayRating]);
   const sortedTimelineEvents = useMemo(() => {
     const tk = format(liveNow, "yyyy-MM-dd");
     const copy = timelineEvents.filter((e) => (e.date ?? tk) === tk);
@@ -1694,24 +1758,49 @@ function App() {
     <div className="app-shell">
       <header className="top">
         <div>
-          <p className="muted">Consistency streak</p>
-          <div className="streak-wrap">
-            <motion.span
-              className="streak-icon"
-              animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-              aria-hidden="true"
+          <p className="muted">Consistency streak · calendar days</p>
+          <div className="streak-weather-row">
+            <div className="streak-wrap">
+              <motion.span
+                className="streak-icon"
+                animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                aria-hidden="true"
+              >
+                <IosIcon name="streak" />
+              </motion.span>
+              <motion.h1
+                key={streakDays}
+                initial={{ opacity: 0.4, y: 6, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ type: "spring", stiffness: 250, damping: 16 }}
+              >
+                {streakDays} day{streakDays === 1 ? "" : "s"}
+              </motion.h1>
+            </div>
+            <div
+              className="header-hargeisa-weather"
+              role="status"
+              aria-live="polite"
+              aria-label={
+                weatherBrief
+                  ? `Hargeisa weather, ${Math.round(weatherBrief.currentTempC)} degrees Celsius, ${weatherBrief.currentSummary}`
+                  : weatherLoading
+                    ? "Loading Hargeisa weather"
+                    : "Hargeisa weather unavailable"
+              }
             >
-              <IosIcon name="streak" />
-            </motion.span>
-            <motion.h1
-              key={streakDays}
-              initial={{ opacity: 0.4, y: 6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ type: "spring", stiffness: 250, damping: 16 }}
-            >
-              {streakDays} day{streakDays === 1 ? "" : "s"}
-            </motion.h1>
+              {weatherBrief ? (
+                <>
+                  <span className="header-hargeisa-temp">{Math.round(weatherBrief.currentTempC)}°</span>
+                  <span className="muted header-hargeisa-summary">{weatherBrief.currentSummary}</span>
+                </>
+              ) : weatherLoading ? (
+                <span className="muted header-hargeisa-summary">Hargeisa · …</span>
+              ) : (
+                <span className="muted header-hargeisa-summary">Hargeisa · —</span>
+              )}
+            </div>
           </div>
         </div>
         <p className="muted">{format(new Date(), "EEEE, MMM d")}</p>
@@ -1720,43 +1809,154 @@ function App() {
       <main className="content">
         {tab === "Home" && (
           <div className="home-layout">
-            <section className="home-intro news-card">
-              <div className="row">
-                <div>
-                  <p className="home-kicker">Somaliland brief</p>
-                  <h2 className="home-title">Top News</h2>
+            <section
+              className={`home-intro regional-brief-card${regionalBriefExpanded ? "" : " regional-brief-card--collapsed"}`}
+              aria-labelledby="regional-brief-heading"
+            >
+              <div className="row regional-brief-top">
+                <div className="regional-brief-title-row">
+                  <button
+                    type="button"
+                    className="regional-brief-collapse-btn"
+                    aria-expanded={regionalBriefExpanded}
+                    aria-controls="regional-brief-body"
+                    aria-label={regionalBriefExpanded ? "Collapse Hargeisa section" : "Expand Hargeisa section"}
+                    onClick={() => setRegionalBriefExpanded((v) => !v)}
+                  >
+                    <span className="regional-brief-chevron" aria-hidden />
+                  </button>
+                  <div className="regional-brief-title-copy">
+                    <h2 id="regional-brief-heading" className="home-title regional-brief-title-plain">
+                      Hargeisa
+                    </h2>
+                  </div>
                 </div>
-                <button type="button" className="news-live-dot" onClick={() => { void refreshNews(); }}>
-                  {newsLoading ? "Loading..." : "Refresh news"}
+                <button type="button" className="news-live-dot" onClick={() => { void refreshRegionalBrief(); }}>
+                  {(newsLoading || weatherLoading) ? "Refreshing…" : "Refresh"}
                 </button>
               </div>
-              {!newsLoading && newsItems.length === 0 && !newsError && (
-                <p className="muted">Tap “Refresh news” to load the latest Somaliland headlines.</p>
-              )}
-              {newsLoading && <p className="muted">Loading latest headlines...</p>}
-              {!newsLoading && newsError && <p className="muted">{newsError}</p>}
-              {!newsLoading && !newsError && newsItems.length > 0 && (
-                <button
-                  type="button"
-                  className="news-hot-item"
-                  onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
-                >
-                  <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.strong
-                      key={(latestNewsIsFresh ? latestNews : fallbackHeadline).url}
-                      className="news-hot-title"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.25 }}
+
+              <div
+                id="regional-brief-body"
+                className={`regional-brief-body ${regionalBriefExpanded ? "is-expanded" : "is-collapsed"}`}
+                aria-hidden={!regionalBriefExpanded}
+              >
+                <div className="regional-brief-grid">
+                <div className="regional-brief-panel regional-brief-panel--weather">
+                  <div className="regional-panel-head">
+                    <span className="regional-panel-kicker">Forecast</span>
+                  </div>
+                  {weatherLoading && !weatherBrief && (
+                    <p className="muted">Loading…</p>
+                  )}
+                  {!weatherLoading && weatherError && !weatherBrief && (
+                    <p className="muted">{weatherError}</p>
+                  )}
+                  {weatherBrief && (
+                    <>
+                      {(() => {
+                        const t = Math.round(weatherBrief.currentTempC);
+                        const lo = Math.round(weatherBrief.todayLowC);
+                        const hi = Math.round(weatherBrief.todayHighC);
+                        const rawSummary = weatherBrief.currentSummary;
+                        const summaryLc = rawSummary.length
+                          ? `${rawSummary.charAt(0).toLowerCase()}${rawSummary.slice(1)}`
+                          : rawSummary;
+                        const pct = weatherBrief.todayRainChancePct;
+                        const mm = weatherBrief.todayRainMm;
+                        const ariaRain =
+                          pct != null && pct >= 20
+                            ? ` About ${Math.round(pct)} percent chance of rain.`
+                            : mm >= 0.4
+                              ? ` Roughly ${mm.toFixed(1)} millimeters rain expected.`
+                              : "";
+                        const ariaLabel = `Right now ${t} degrees Celsius, ${rawSummary}. Today around ${lo} to ${hi} degrees.${ariaRain}`;
+                        let rangeSuffix: ReactNode = ".";
+                        if (pct != null && pct >= 20) {
+                          rangeSuffix = (
+                            <>
+                              , with about a <strong>{Math.round(pct)}%</strong> chance of rain.
+                            </>
+                          );
+                        } else if (mm >= 0.4) {
+                          rangeSuffix = (
+                            <>
+                              , expecting roughly <strong>{mm.toFixed(1)} mm</strong> rain.
+                            </>
+                          );
+                        }
+                        return (
+                          <p className="regional-forecast-blurb" aria-label={ariaLabel}>
+                            {"It's "}
+                            <strong>{t}°</strong>
+                            {" "}
+                            and {summaryLc}. Today around{" "}
+                            <strong>{lo}°–{hi}°</strong>
+                            {rangeSuffix}
+                          </p>
+                        );
+                      })()}
+                      {(() => {
+                        const tip =
+                          weatherBrief.alerts.find((a) => a.kind === "rain") ??
+                          weatherBrief.alerts.find((a) => a.kind === "heat");
+                        return tip ? (
+                          <p className={`weather-alert weather-alert--${tip.kind}`} role="status">
+                            {tip.text}
+                          </p>
+                        ) : null;
+                      })()}
+                      <p className="muted weather-updated-foot">
+                        Updated{" "}
+                        {(() => {
+                          const t = parseISO(weatherBrief.currentTimeIso);
+                          return Number.isFinite(+t)
+                            ? formatDistanceToNow(t, { addSuffix: true })
+                            : "recently";
+                        })()}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <div className="regional-brief-panel regional-brief-panel--news">
+                  <div className="regional-panel-head">
+                    <span className="regional-panel-kicker">News</span>
+                  </div>
+                  {!newsLoading && newsItems.length === 0 && !newsError && (
+                    <p className="muted">Tap Refresh for headlines.</p>
+                  )}
+                  {newsLoading && newsItems.length === 0 && (
+                    <p className="muted">Loading…</p>
+                  )}
+                  {!newsLoading && newsError && (
+                    <p className="muted">{newsError}</p>
+                  )}
+                  {!newsLoading && !newsError && newsItems.length > 0 && (
+                    <button
+                      type="button"
+                      className="news-hot-item regional-news-hit"
+                      onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
                     >
-                      {(latestNewsIsFresh ? latestNews : fallbackHeadline).title}
-                    </motion.strong>
-                  </AnimatePresence>
-                  <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
-                </button>
-              )}
+                      <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
+                      <AnimatePresence mode="wait" initial={false}>
+                        <motion.strong
+                          key={(latestNewsIsFresh ? latestNews : fallbackHeadline).url}
+                          className="news-hot-title"
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -8 }}
+                          transition={{ duration: 0.25 }}
+                        >
+                          {(latestNewsIsFresh ? latestNews : fallbackHeadline).title}
+                        </motion.strong>
+                      </AnimatePresence>
+                      <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
+                    </button>
+                  )}
+                </div>
+                </div>
+              </div>
             </section>
             <section className="home-intro live-briefing-grid">
               {liveOverview}
@@ -2673,7 +2873,7 @@ function App() {
                 <div className="morning-news">
                   <div className="row">
                     <h4>Hot Somaliland news</h4>
-                    <button type="button" className="ghost-btn" onClick={() => { void refreshNews(); }}>Refresh</button>
+                    <button type="button" className="ghost-btn" onClick={() => { void refreshRegionalBrief(); }}>Refresh</button>
                   </div>
                   {!newsLoading && fallbackHeadline && (
                     <button

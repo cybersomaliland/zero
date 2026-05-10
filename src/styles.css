@@ -48,7 +48,48 @@ button { touch-action: manipulation; }
   padding: max(12px, env(safe-area-inset-top)) 14px calc(94px + env(safe-area-inset-bottom));
 }
 .top { display: flex; align-items: end; justify-content: space-between; margin: 8px 0 14px; }
+.streak-weather-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
 .streak-wrap { display: flex; align-items: center; gap: 8px; }
+.header-hargeisa-weather {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--border, #e2e8f0);
+}
+.header-hargeisa-temp {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: #0b5cad;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme="dark"] .header-hargeisa-temp {
+  color: #8ebdff;
+}
+.header-hargeisa-summary {
+  font-size: 11px;
+  line-height: 1.25;
+  max-width: 12rem;
+}
+@media (max-width: 380px) {
+  .header-hargeisa-weather {
+    flex-basis: 100%;
+    padding-left: 0;
+    margin-top: 2px;
+    border-left: none;
+    padding-top: 8px;
+    border-top: 1px solid var(--border, #e2e8f0);
+  }
+}
 .streak-icon {
   width: 30px;
   height: 30px;
@@ -1380,6 +1421,204 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
   display: grid;
   gap: 8px;
 }
+
+/* Regional brief: Somaliland news + Hargeisa weather */
+.regional-brief-card {
+  border-radius: 22px;
+  padding: 14px 14px 16px;
+  background: linear-gradient(145deg, #f8fbff 0%, #eef6ff 42%, #f4f0ff 100%);
+  border: 1px solid #e2ebfb;
+  box-shadow: 0 16px 36px #15274a18;
+  display: grid;
+  gap: 14px;
+}
+.regional-brief-card--collapsed {
+  gap: 0;
+}
+.regional-brief-top {
+  align-items: flex-start;
+}
+.regional-brief-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.regional-brief-title-copy {
+  min-width: 0;
+}
+.regional-brief-top button.regional-brief-collapse-btn {
+  flex-shrink: 0;
+  margin-top: 1px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 10px;
+  border: none;
+  background: transparent !important;
+  color: #64748b !important;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.regional-brief-top button.regional-brief-collapse-btn:hover {
+  background: #ffffffa6 !important;
+  color: #0f172a !important;
+}
+.regional-brief-chevron {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transition: transform 0.22s ease;
+}
+.regional-brief-top button.regional-brief-collapse-btn[aria-expanded="true"] .regional-brief-chevron {
+  transform: rotate(45deg);
+  margin-top: -3px;
+}
+.regional-brief-top button.regional-brief-collapse-btn[aria-expanded="false"] .regional-brief-chevron {
+  transform: rotate(-45deg);
+}
+.regional-brief-body {
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  transition:
+    max-height 0.38s ease,
+    opacity 0.26s ease,
+    margin-top 0.22s ease;
+}
+.regional-brief-body.is-expanded {
+  max-height: min(2800px, 320vh);
+  opacity: 1;
+}
+.regional-brief-body.is-collapsed {
+  max-height: 0 !important;
+  opacity: 0;
+  margin-top: -6px;
+  pointer-events: none;
+}
+.regional-brief-title-plain {
+  margin: 0;
+}
+.regional-brief-grid {
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 560px) {
+  .regional-brief-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+.regional-brief-panel {
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: #ffffffd9;
+  box-shadow: inset 0 0 0 1px #e8eef9;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.regional-brief-panel--weather {
+  background: linear-gradient(180deg, #ffffffee, #f3f9ff);
+}
+.regional-brief-panel--news {
+  background: linear-gradient(180deg, #ffffffee, #faf8ff);
+}
+.regional-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.regional-panel-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5a6b86;
+}
+.regional-panel-coords {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.weather-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.weather-hero-temp {
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+  color: #0b5cad;
+}
+.weather-hero-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+.weather-hero-condition {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.weather-hero-range,
+.weather-hero-next {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.regional-forecast-blurb {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary, #1e293b);
+}
+.regional-forecast-blurb strong {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.weather-alert {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+.weather-alert--rain {
+  background: #e8f4ff;
+  color: #154a7a;
+  box-shadow: inset 0 0 0 1px #c5dcf5;
+}
+.weather-alert--heat {
+  background: #fff5e8;
+  color: #8a4518;
+  box-shadow: inset 0 0 0 1px #ffd9b0;
+}
+.weather-alert--info {
+  background: #f1f5f9;
+  color: #475569;
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
+.weather-accuracy-foot {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.weather-updated-foot {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.regional-news-hit {
+  margin-top: 2px;
+}
 .briefing-card {
   border-radius: 22px;
   padding: 14px;
@@ -2523,6 +2762,7 @@ input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; paddin
 .settings-card,
 .routine-card,
 .news-card,
+.regional-brief-card,
 .briefing-card,
 .sheet {
   background: var(--bg-secondary) !important;
@@ -2549,7 +2789,7 @@ textarea {
   color: var(--text-primary) !important;
   border-color: var(--border) !important;
 }
-.row button,
+.row button:not(.regional-brief-collapse-btn),
 .sheet button,
 .routine-now-card button,
 .news-live-dot,
@@ -2605,6 +2845,38 @@ html[data-theme="dark"] .timeline-memory,
 html[data-theme="dark"] .routine-reminder-form,
 html[data-theme="dark"] .daily-tip,
 html[data-theme="dark"] .briefing-summary,
+html[data-theme="dark"] .regional-brief-panel {
+  background: var(--bg-tertiary) !important;
+  box-shadow: inset 0 0 0 1px var(--border) !important;
+}
+html[data-theme="dark"] .weather-hero-condition {
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .weather-hero-temp {
+  color: #8ebdff !important;
+}
+html[data-theme="dark"] .regional-brief-top button.regional-brief-collapse-btn {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="dark"] .regional-brief-top button.regional-brief-collapse-btn:hover {
+  background: #ffffff14 !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .weather-alert--rain {
+  background: #1a2838 !important;
+  color: #b3d0f5 !important;
+  box-shadow: inset 0 0 0 1px #355070 !important;
+}
+html[data-theme="dark"] .weather-alert--heat {
+  background: #382818 !important;
+  color: #ffd9b0 !important;
+  box-shadow: inset 0 0 0 1px #5c4028 !important;
+}
+html[data-theme="dark"] .weather-alert--info {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+  box-shadow: inset 0 0 0 1px var(--border) !important;
+}
 html[data-theme="dark"] .news-hot-item,
 html[data-theme="dark"] .day-summary-grid article,
 html[data-theme="dark"] .calendar-day-goal,

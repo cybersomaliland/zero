@@ -19,21 +19,29 @@ function isSomalilandRelevant(item: { title: string; description: string; source
 }
 
 export async function fetchSomalilandNews(signal?: AbortSignal): Promise<NewsItem[]> {
+  let response: Response;
   try {
-    const xRes = await fetch("/api/x-brief", { signal });
-    if (!xRes.ok) return [];
-    const xData = await xRes.json() as { items?: NewsItem[] };
-    const normalized = (xData.items ?? [])
-      .map((item) => ({
-        title: item.title,
-        description: normalizeDescription(item.description),
-        url: item.url,
-        source: item.source || "X (Twitter)",
-        publishedAt: item.publishedAt,
-      }));
-    const relevant = normalized.filter(isSomalilandRelevant);
-    return (relevant.length > 0 ? relevant : normalized).slice(0, 3);
+    response = await fetch("/api/x-brief", { signal });
   } catch {
-    return [];
+    throw new Error("NEWS_NETWORK");
   }
+  if (!response.ok) {
+    throw new Error(`NEWS_HTTP_${response.status}`);
+  }
+  let xData: { items?: NewsItem[] };
+  try {
+    xData = (await response.json()) as { items?: NewsItem[] };
+  } catch {
+    throw new Error("NEWS_BAD_JSON");
+  }
+  const normalized = (xData.items ?? [])
+    .map((item) => ({
+      title: item.title,
+      description: normalizeDescription(item.description),
+      url: item.url,
+      source: item.source || "X (Twitter)",
+      publishedAt: item.publishedAt,
+    }));
+  const relevant = normalized.filter(isSomalilandRelevant);
+  return (relevant.length > 0 ? relevant : normalized).slice(0, 3);
 }
