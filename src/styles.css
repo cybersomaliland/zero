@@ -2752,6 +2752,21 @@ html[data-theme="dark"] .coach-zero-live-dot {
   font-size: 13px;
   color: var(--text-secondary);
 }
+.daily-allowance-bills-details .daily-allowance-bill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.sheet label.mark-paid-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
 .daily-allowance-bills .daily-allowance-collapse span:first-child {
   font-weight: 600;
 }

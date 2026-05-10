@@ -13,6 +13,7 @@ import {
   forecast,
   getUpcomingBills,
   money,
+  nextDateFromCycle,
   simulateWhatIfScenario,
 } from "./logic";
 import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
@@ -155,6 +156,7 @@ function App() {
   const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
+  const [markPaidTarget, setMarkPaidTarget] = useState<Subscription | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantBusy, setAssistantBusy] = useState(false);
@@ -2439,9 +2441,16 @@ function App() {
                   {showAllowanceBillsDetails && (
                     <div className="daily-allowance-bills-details">
                       {weeklyDueBills.map((bill) => (
-                        <p key={bill.id}>
-                          {bill.name} - {money(bill.amount)} ({format(parseISO(bill.dueDate), "EEE d MMM")})
-                        </p>
+                        <div key={bill.id} className="daily-allowance-bill-row">
+                          <span>
+                            {bill.name} - {money(bill.amount)} ({format(parseISO(bill.dueDate), "EEE d MMM")})
+                          </span>
+                          {bill.id != null && (
+                            <button type="button" className="ghost-btn" onClick={() => setMarkPaidTarget(bill)}>
+                              Paid
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -2625,14 +2634,12 @@ function App() {
             {upcoming.map((s) => (
               <SubscriptionRow
                 key={s.id}
-                label={s.name}
-                amount={s.amount}
-                date={s.dueDate}
-                urgency={s.urgency}
+                row={s}
                 onEdit={() => {
                   setEditingSub(subscriptions.find((x) => x.id === s.id) ?? null);
                   setShowSub(true);
                 }}
+                onMarkPaid={() => setMarkPaidTarget(subscriptions.find((x) => x.id === s.id) ?? s)}
               />
             ))}
           </section>
@@ -3250,6 +3257,29 @@ function App() {
               else await addSubscription(payload);
               setShowSub(false);
               setEditingSub(null);
+            }}
+          />
+        )}
+        {markPaidTarget?.id != null && (
+          <MarkBillPaidSheet
+            key={markPaidTarget.id}
+            subscription={markPaidTarget}
+            onClose={() => setMarkPaidTarget(null)}
+            onConfirm={async ({ logExpense, expenseAmount, category, note }) => {
+              const id = markPaidTarget.id!;
+              const nextBillingDate = nextDateFromCycle(markPaidTarget.nextBillingDate, markPaidTarget.cycle);
+              await updateSubscription(id, { nextBillingDate });
+              if (logExpense) {
+                const clean = normalizeTransactionInput({
+                  amount: expenseAmount,
+                  type: "expense",
+                  category: category || undefined,
+                  note: note || undefined,
+                  date: new Date().toISOString(),
+                });
+                await addTransaction(clean);
+              }
+              setMarkPaidTarget(null);
             }}
           />
         )}
@@ -3912,15 +3942,118 @@ function TransactionRow({ tx, onDelete, onEdit }: { tx: any; onDelete: () => voi
   );
 }
 
-function SubscriptionRow({ label, amount, date, urgency, onEdit }: { label: string; amount: number; date: string; urgency: string; onEdit: () => void }) {
+type SubscriptionBillRow = Subscription & { dueDate: string; urgency: string };
+
+function SubscriptionRow({
+  row,
+  onEdit,
+  onMarkPaid,
+}: {
+  row: SubscriptionBillRow;
+  onEdit: () => void;
+  onMarkPaid: () => void;
+}) {
+  const date = row.dueDate;
   return (
-    <div className={`urgency ${urgency}`}>
-      <div><strong>{label}</strong><p>{formatDistanceToNow(parseISO(date), { addSuffix: true })}</p></div>
+    <div className={`urgency ${row.urgency}`}>
+      <div><strong>{row.name}</strong><p>{formatDistanceToNow(parseISO(date), { addSuffix: true })}</p></div>
       <div className="inline-actions">
-        <strong>{money(amount)}</strong>
+        <strong>{money(row.amount)}</strong>
+        {row.id != null && (
+          <button type="button" className="ghost-btn" onClick={onMarkPaid}>Paid</button>
+        )}
         <button type="button" className="ghost-btn" onClick={onEdit}>Edit</button>
       </div>
     </div>
+  );
+}
+
+function MarkBillPaidSheet({
+  subscription,
+  onClose,
+  onConfirm,
+}: {
+  subscription: Subscription;
+  onClose: () => void;
+  onConfirm: (opts: { logExpense: boolean; expenseAmount: number; category: string; note: string }) => Promise<void>;
+}) {
+  const [logExpense, setLogExpense] = useState(true);
+  const [amount, setAmount] = useState(String(subscription.amount));
+  const [category, setCategory] = useState("Subscriptions");
+  const [note, setNote] = useState(`${subscription.name} paid`);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const nextDateIso = useMemo(
+    () => nextDateFromCycle(subscription.nextBillingDate, subscription.cycle),
+    [subscription.nextBillingDate, subscription.cycle],
+  );
+
+  const handleConfirm = async () => {
+    setError("");
+    if (logExpense) {
+      try {
+        normalizeTransactionInput({
+          amount: Number(amount),
+          type: "expense",
+          category: category || undefined,
+          note: note || undefined,
+          date: new Date().toISOString(),
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Expense is invalid.");
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await onConfirm({
+        logExpense,
+        expenseAmount: Number(amount),
+        category: category.trim(),
+        note: note.trim(),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div className="sheet-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
+        <h3>Mark paid</h3>
+        <p className="muted">
+          <strong>{subscription.name}</strong> — next billing moves from{" "}
+          {format(parseISO(subscription.nextBillingDate), "MMM d, yyyy")} to {format(parseISO(nextDateIso), "MMM d, yyyy")}.
+        </p>
+        <label className="mark-paid-checkbox">
+          <input type="checkbox" checked={logExpense} onChange={(e) => setLogExpense(e.target.checked)} />
+          Log expense today ({money(subscription.amount)} default)
+        </label>
+        {logExpense && (
+          <>
+            <label>
+              Amount
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+            </label>
+            <label>
+              Category
+              <input value={category} onChange={(e) => setCategory(e.target.value)} list="mark-paid-categories" placeholder="Subscriptions" />
+            </label>
+            <datalist id="mark-paid-categories">{CATEGORY_NAMES.map((c) => <option key={c} value={c} />)}</datalist>
+            <label>
+              Note
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" />
+            </label>
+          </>
+        )}
+        {error && <p className="error-text">{error}</p>}
+        <div className="row">
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" onClick={() => void handleConfirm()} disabled={busy}>{busy ? "Saving…" : "Confirm"}</button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
