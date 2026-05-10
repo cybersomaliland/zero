@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subDays, subWeeks } from "date-fns";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
@@ -651,6 +651,16 @@ function App() {
     }
     return streak;
   }, [transactions, routineHistory, liveNow, timelineEvents, tasks, meals, dayRating]);
+  /** Hue shifts once per calendar day so the streak badge feels fresh daily. */
+  const streakIconSurfaceStyle = useMemo((): CSSProperties => {
+    const dayIndex = differenceInCalendarDays(startOfDay(liveNow), startOfDay(new Date(2020, 0, 1)));
+    const h1 = ((dayIndex * 53) % 360 + 360) % 360;
+    const h2 = (h1 + 28 + (dayIndex % 6) * 11) % 360;
+    return {
+      background: `linear-gradient(145deg, hsl(${h1}, 88%, 58%), hsl(${h2}, 84%, 46%))`,
+      boxShadow: `0 8px 18px hsla(${h2}, 82%, 38%, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.52)`,
+    };
+  }, [liveNow]);
   const sortedTimelineEvents = useMemo(() => {
     const tk = format(liveNow, "yyyy-MM-dd");
     const copy = timelineEvents.filter((e) => (e.date ?? tk) === tk);
@@ -878,65 +888,44 @@ function App() {
         typeof snapshot.dayRating === "number",
     ).length;
 
-    const happened: string[] = [
-      `Money (Sat–Fri week): expenses ${money(thisTotals.spent)}; income lines logged ${money(thisTotals.income)} for dates in this window.`,
-      `Routine: ${routineDaysWithActivity} day(s) had checklist, meals, timeline, or a rating. Today merges live; older days appear only if this device saved that day. Day rating avg ${thisRating.daysRated > 0 ? `${thisRating.avg.toFixed(1)}/5` : "n/a"} (${thisRating.daysRated} rated).`,
-      thisCompletion.daysWithTasks > 0
-        ? `Tasks: ${thisCompletion.daysWithTasks} day(s) had checklists — avg completion ${Math.round(thisCompletion.avg * 100)}%.`
-        : "Tasks: no checklist snapshots this week yet — use Routine to add items.",
-    ];
-    if (thisTopCategory) happened.push(`Top spending category: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).`);
+    const weekRange = `${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")}`;
+    const moneyLine =
+      `Spent ${money(thisTotals.spent)} · Income logged ${money(thisTotals.income)}` +
+      (thisTopCategory ? ` · Top category: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).` : ".");
 
-    const improved: string[] = [];
-    if (prevTotals.spent > 0 && thisTotals.spent < prevTotals.spent) {
-      improved.push(`Money improved: weekly expenses dropped by ${money(prevTotals.spent - thisTotals.spent)} vs last week.`);
-    }
-    if (
+    const routineBits: string[] = [];
+    if (routineDaysWithActivity > 0) routineBits.push(`${routineDaysWithActivity} active days`);
+    if (thisCompletion.daysWithTasks > 0) routineBits.push(`~${Math.round(thisCompletion.avg * 100)}% tasks`);
+    if (thisRating.daysRated > 0) routineBits.push(`${thisRating.avg.toFixed(1)}/5 mood`);
+    const routineLine =
+      routineBits.length > 0 ? `${routineBits.join(" · ")}.` : "No routine saved yet — log today in Routine.";
+
+    let takeawayLine = "Keep the same rhythm — small habits add up.";
+    if (thisTotals.income <= 0 && thisTotals.spent > 0) {
+      takeawayLine = "Log income too so weekly totals stay meaningful.";
+    } else if (thisTotals.income > 0 && thisTotals.spent > thisTotals.income) {
+      takeawayLine = "Spend passed logged income — check categories or entries.";
+    } else if (prevTotals.spent > 0 && thisTotals.spent + 0.005 < prevTotals.spent) {
+      takeawayLine = `Spend down about ${money(prevTotals.spent - thisTotals.spent)} vs last week.`;
+    } else if (
       thisCompletion.daysWithTasks > 0 &&
       prevCompletion.daysWithTasks > 0 &&
       thisCompletion.avg > prevCompletion.avg
     ) {
-      improved.push(
-        `Task rhythm improved: avg completion ${Math.round(prevCompletion.avg * 100)}% → ${Math.round(thisCompletion.avg * 100)}% (both weeks had checklist days).`,
-      );
-    }
-    if (thisRating.daysRated > 0 && prevRating.daysRated > 0 && thisRating.avg > prevRating.avg) {
-      improved.push(`Routine quality improved: avg day score ${prevRating.avg.toFixed(1)} → ${thisRating.avg.toFixed(1)}.`);
-    }
-    if (improved.length === 0) {
-      improved.push("Consistency held steady. Keep the same structure and tighten one small habit next week.");
-    }
-
-    const next: string[] = [];
-    if (thisTotals.income > 0 && thisTotals.spent > thisTotals.income) {
-      next.push(
-        `Money: expenses exceeded logged income this week — capture every income entry, or compare spending to your real salary in Settings.`,
-      );
-    } else {
-      const weeklyCapHint =
-        thisTotals.spent > 0 ? Math.max(0, thisTotals.spent * 0.9) : Math.max(0, safePerDay * 7);
-      next.push(
-        `Money: rough weekly guardrail ~${money(weeklyCapHint)} (${thisTotals.spent > 0 ? "~90% of this week's logged expenses" : "daily allowance × 7 — no expenses dated this week"}).`,
-      );
-    }
-    if (thisTopCategory) {
-      next.push(`Spending focus: ease off ${thisTopCategory[0]} next week (simple category cap).`);
-    }
-    if (thisCompletion.daysWithTasks > 0) {
-      next.push(
-        `Routine/tasks: keep one morning anchor block; aim ~${Math.min(100, Math.max(Math.round(thisCompletion.avg * 100) + 5, 75))}% checklist completion.`,
-      );
-    } else {
-      next.push("Routine/tasks: add a tiny daily checklist (2–3 items) so weekly stats reflect real progress.");
+      takeawayLine = `Tasks up: ${Math.round(prevCompletion.avg * 100)}% → ${Math.round(thisCompletion.avg * 100)}% avg completion.`;
+    } else if (thisRating.daysRated > 0 && prevRating.daysRated > 0 && thisRating.avg > prevRating.avg) {
+      takeawayLine = `Mood avg up (${prevRating.avg.toFixed(1)} → ${thisRating.avg.toFixed(1)}).`;
+    } else if (thisTopCategory) {
+      takeawayLine = `Next week: trim ${thisTopCategory[0]} if you can.`;
     }
 
     return {
-      title: `Weekly review · ${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")} (Sat–Fri)`,
-      happened,
-      improved,
-      next,
+      weekRange,
+      moneyLine,
+      routineLine,
+      takeawayLine,
     };
-  }, [transactions, routineHistory, safePerDay, timelineEvents, tasks, meals, dayRating, ritualEnergy]);
+  }, [transactions, routineHistory, timelineEvents, tasks, meals, dayRating, ritualEnergy]);
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
@@ -1758,11 +1747,11 @@ function App() {
     <div className="app-shell">
       <header className="top">
         <div>
-          <p className="muted">Consistency streak · calendar days</p>
           <div className="streak-weather-row">
             <div className="streak-wrap">
               <motion.span
                 className="streak-icon"
+                style={streakIconSurfaceStyle}
                 animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
                 transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
                 aria-hidden="true"
@@ -2133,23 +2122,14 @@ function App() {
                 </article>
               )}
             </section>
-            <section className="card">
+            <section className="card weekly-review-simple">
               <div className="row">
-                <h3>Weekly review report</h3>
-                <p className="muted">Sat–Fri weeks</p>
+                <h3>Weekly review</h3>
+                <p className="muted">{weeklyReviewReport.weekRange}</p>
               </div>
-              <p className="muted">{weeklyReviewReport.title}</p>
-              <p className="muted weekly-review-footnote">
-                Totals use transactions dated in each window. Routine stats blend saved history with today&apos;s live Routine tab.
-              </p>
-              <div className="suggestion-list">
-                <p className="muted"><strong>What happened</strong></p>
-                {weeklyReviewReport.happened.map((item) => <p key={`h-${item}`} className="muted">- {item}</p>)}
-                <p className="muted"><strong>What improved</strong></p>
-                {weeklyReviewReport.improved.map((item) => <p key={`i-${item}`} className="muted">- {item}</p>)}
-                <p className="muted"><strong>What to change next week</strong></p>
-                {weeklyReviewReport.next.map((item) => <p key={`n-${item}`} className="muted">- {item}</p>)}
-              </div>
+              <p className="weekly-review-lead">{weeklyReviewReport.moneyLine}</p>
+              <p className="muted weekly-review-line">{weeklyReviewReport.routineLine}</p>
+              <p className="muted weekly-review-line">{weeklyReviewReport.takeawayLine}</p>
             </section>
 
             <div className="home-section-head">

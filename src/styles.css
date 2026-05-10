@@ -96,8 +96,7 @@ html[data-theme="dark"] .header-hargeisa-temp {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #ffd479, #ff9e46);
-  box-shadow: 0 8px 18px #ff9e4645, inset 0 1px 0 #ffffff88;
+  /* Background + shadow come from inline styles (daily hue in App.tsx). */
 }
 .streak-icon svg {
   width: 18px;
@@ -2668,6 +2667,20 @@ html[data-theme="dark"] .bill-alert-row .live-label {
 .suggestion-list {
   display: grid;
   gap: 6px;
+}
+.weekly-review-simple .weekly-review-lead {
+  margin: 6px 0 10px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-primary, #1e293b);
+}
+.weekly-review-simple .weekly-review-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.weekly-review-simple .weekly-review-line:last-child {
+  margin-bottom: 0;
 }
 .morning-coach-quick {
   display: flex;
