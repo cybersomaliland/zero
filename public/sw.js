@@ -1,5 +1,5 @@
-const CACHE = "zero-v3-ios-icons";
-const ASSETS = ["/", "/index.html", "/manifest.webmanifest?v=ios3", "/icon.svg?v=ios3", "/maskable.svg?v=ios3"];
+const CACHE = "zero-v4-zero-mark-icon";
+const ASSETS = ["/", "/index.html", "/manifest.webmanifest?v=ios4", "/icon.svg?v=ios4", "/maskable.svg?v=ios4"];
 let notificationData = { upcomingCount: 0 };
 
 self.addEventListener("install", (event) => {

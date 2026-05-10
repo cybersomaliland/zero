@@ -1,29 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="mBg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#53b4ff"/>
-      <stop offset="55%" stop-color="#0a84ff"/>
-      <stop offset="100%" stop-color="#0057d9"/>
+    <linearGradient id="mzBg" x1="72" y1="56" x2="456" y2="472">
+      <stop offset="0%" stop-color="#5ec4ff"/>
+      <stop offset="40%" stop-color="#0a84ff"/>
+      <stop offset="100%" stop-color="#003d99"/>
     </linearGradient>
-    <linearGradient id="mGlass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffffbf"/>
-      <stop offset="100%" stop-color="#ffffff00"/>
-    </linearGradient>
-    <linearGradient id="mRing" x1="0" y1="0" x2="1" y2="1">
+    <radialGradient id="mzGlow" cx="28%" cy="22%" r="62%">
+      <stop offset="0%" stop-color="#ffffff52"/>
+      <stop offset="55%" stop-color="#ffffff00"/>
+    </radialGradient>
+    <linearGradient id="mzRing" x1="156" y1="152" x2="364" y2="396">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#e9f4ff"/>
-    </linearGradient>
-    <linearGradient id="mAccent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#d9ecff"/>
-      <stop offset="100%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#bfe0ff"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="124" fill="url(#mBg)"/>
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#ffffff38" stroke-width="4"/>
-  <path d="M48 54h416a116 116 0 0 1-116 116H164A116 116 0 0 1 48 54Z" fill="url(#mGlass)"/>
-  <circle cx="392" cy="122" r="42" fill="#ffffff2e"/>
-  <circle cx="256" cy="272" r="118" fill="none" stroke="url(#mRing)" stroke-width="40"/>
-  <path d="M252 182c52 0 90 40 90 90s-38 90-90 90" fill="none" stroke="#ffffff66" stroke-width="16" stroke-linecap="round"/>
-  <path d="M168 308l62-62 44 44 70-70" fill="none" stroke="url(#mAccent)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="338" cy="220" r="16" fill="#ffffff"/>
+  <rect width="512" height="512" rx="116" fill="url(#mzBg)"/>
+  <rect width="512" height="512" rx="116" fill="url(#mzGlow)"/>
+  <ellipse cx="256" cy="268" rx="100" ry="140" fill="none" stroke="url(#mzRing)" stroke-width="60" stroke-linecap="round"/>
 </svg>

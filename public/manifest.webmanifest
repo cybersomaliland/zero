@@ -8,13 +8,13 @@
   "start_url": "/",
   "icons": [
     {
-      "src": "/icon.svg?v=ios3",
+      "src": "/icon.svg?v=ios4",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/maskable.svg?v=ios3",
+      "src": "/maskable.svg?v=ios4",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"

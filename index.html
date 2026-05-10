@@ -2,9 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=ios3" media="(prefers-color-scheme: light)" />
-    <link rel="icon" type="image/svg+xml" href="/maskable.svg?v=ios3" media="(prefers-color-scheme: dark)" />
-    <link rel="manifest" href="/manifest.webmanifest?v=ios3" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=ios4" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/maskable.svg?v=ios4" media="(prefers-color-scheme: dark)" />
+    <link rel="manifest" href="/manifest.webmanifest?v=ios4" />
     <meta name="theme-color" content="#0A84FF" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -23,139 +23,248 @@
       })();
     </script>
     <style>
-      @keyframes splashFloat {
-        0%, 100% { transform: translateY(0px) scale(1); }
-        50% { transform: translateY(-5px) scale(1.02); }
+      @keyframes splashBlobA {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        33% { transform: translate(8vw, -4vh) scale(1.06); }
+        66% { transform: translate(-5vw, 6vh) scale(0.94); }
       }
-      @keyframes splashGlow {
-        0%, 100% { opacity: 0.35; transform: scale(0.95); }
-        50% { opacity: 0.7; transform: scale(1.02); }
+      @keyframes splashBlobB {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        40% { transform: translate(-10vw, 5vh) scale(1.08); }
+        75% { transform: translate(6vw, -8vh) scale(0.92); }
       }
-      @keyframes splashShimmer {
-        from { transform: translateX(-150%) skewX(-20deg); }
-        to { transform: translateX(260%) skewX(-20deg); }
+      @keyframes splashBlobC {
+        0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+        50% { transform: translate(-50%, -50%) scale(1.14); opacity: 0.74; }
+      }
+      @keyframes splashReveal {
+        from {
+          opacity: 0;
+          transform: translateY(12px) scale(0.97);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+      @keyframes splashMark {
+        0%, 100% { transform: translateY(0); box-shadow: 0 28px 56px rgba(10, 132, 255, 0.22), 0 12px 28px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.42); }
+        50% { transform: translateY(-4px); box-shadow: 0 34px 64px rgba(10, 132, 255, 0.28), 0 14px 32px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.48); }
+      }
+      @keyframes splashProgress {
+        0% { transform: translateX(-100%); opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { transform: translateX(100%); opacity: 0.5; }
       }
       #zero-splash {
         position: fixed;
         inset: 0;
         z-index: 9999;
-        display: grid;
-        place-items: center;
-        background:
-          radial-gradient(circle at 18% 16%, #ffffffd4 0%, #ffffff00 44%),
-          radial-gradient(circle at 84% 88%, #d6e7ff85 0%, #ffffff00 46%),
-          linear-gradient(180deg, #f8fbff 0%, #eef4ff 52%, #e9f0fc 100%);
-        transition: opacity 0.45s ease;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background-color: #e8ecf6;
+        background-image:
+          radial-gradient(ellipse 140% 90% at 50% -30%, #ffffff 0%, transparent 58%),
+          radial-gradient(ellipse 70% 50% at 110% 85%, rgba(176, 206, 255, 0.55) 0%, transparent 52%),
+          radial-gradient(ellipse 55% 45% at -5% 95%, rgba(212, 232, 255, 0.65) 0%, transparent 48%);
+        transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1);
       }
       #zero-splash.hide {
         opacity: 0;
         pointer-events: none;
       }
-      .zero-splash-wrap {
-        position: relative;
-        display: grid;
-        place-items: center;
-      }
-      .zero-splash-glow {
+      .zero-splash-blobs {
         position: absolute;
-        width: 134px;
-        height: 134px;
+        inset: -25%;
+        pointer-events: none;
+      }
+      .zero-splash-blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(72px);
+        will-change: transform;
+      }
+      .zero-splash-blob-a {
+        width: min(52vw, 320px);
+        height: min(52vw, 320px);
+        top: 6%;
+        left: -12%;
+        background: rgba(122, 186, 255, 0.58);
+        animation: splashBlobA 16s ease-in-out infinite;
+      }
+      .zero-splash-blob-b {
+        width: min(48vw, 280px);
+        height: min(48vw, 280px);
+        bottom: -8%;
+        right: -14%;
+        background: rgba(173, 206, 255, 0.52);
+        animation: splashBlobB 18s ease-in-out infinite;
+      }
+      .zero-splash-blob-c {
+        width: min(72vw, 420px);
+        height: min(72vw, 420px);
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle, rgba(10, 132, 255, 0.22) 0%, rgba(255, 255, 255, 0) 68%);
+        filter: blur(56px);
+        animation: splashBlobC 10s ease-in-out infinite;
+      }
+      .zero-splash-panel {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 26px;
+        padding: 48px 36px 56px;
+        max-width: min(92vw, 360px);
+        text-align: center;
+        animation: splashReveal 0.72s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+      }
+      .zero-splash-mark-wrap {
+        position: relative;
+      }
+      .zero-splash-mark-halo {
+        position: absolute;
+        inset: -18px;
         border-radius: 40px;
-        background: radial-gradient(circle at 40% 16%, #90b8ff9e, #90b8ff00 72%);
-        filter: blur(10px);
-        animation: splashGlow 2.4s ease-in-out infinite;
+        background: radial-gradient(circle at 50% 32%, rgba(10, 132, 255, 0.32), transparent 70%);
+        opacity: 0.9;
+        filter: blur(14px);
+        pointer-events: none;
       }
-      .zero-splash-card {
-        width: 108px;
-        height: 108px;
-        border-radius: 32px;
-        display: grid;
-        place-items: center;
+      .zero-splash-mark {
         position: relative;
+        width: min(26vw, 118px);
+        height: min(26vw, 118px);
+        border-radius: 28px;
         overflow: hidden;
-        background: linear-gradient(145deg, #53b4ff, #0a84ff 62%, #0057d9);
-        box-shadow: 0 18px 42px #2f63c33d, inset 0 1px 0 #ffffff9a;
-        animation: splashFloat 2.2s ease-in-out infinite;
+        animation: splashMark 3.4s ease-in-out infinite;
+        box-shadow:
+          0 28px 56px rgba(10, 132, 255, 0.22),
+          0 12px 28px rgba(15, 23, 42, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.42);
       }
-      .zero-splash-card::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        border: 1px solid #ffffff26;
-      }
-      .zero-splash-card::after {
-        content: "";
-        position: absolute;
-        width: 44%;
-        height: 180%;
-        top: -36%;
-        left: -52%;
-        background: linear-gradient(180deg, #ffffff00 0%, #ffffff55 45%, #ffffff00 100%);
-        animation: splashShimmer 2.7s ease-in-out infinite;
-      }
-      .zero-splash-logo {
-        width: 52px;
-        height: 52px;
-        color: #f8fafc;
+      .zero-splash-mark svg {
+        display: block;
+        width: 100%;
+        height: 100%;
       }
       .zero-splash-title {
-        margin: 0 0 12px;
-        font-family: "SF Pro Display", "Inter", "Segoe UI", sans-serif;
-        font-weight: 780;
-        font-size: 30px;
-        line-height: 1;
-        letter-spacing: -0.03em;
-        text-align: center;
-        color: #07132a;
-        text-shadow: 0 1px 0 #ffffffcc;
+        margin: 0;
+        font-size: clamp(2.125rem, 9vw, 2.875rem);
+        font-weight: 700;
+        line-height: 1.02;
+        letter-spacing: -0.048em;
+        background: linear-gradient(122deg, #081427 0%, #142a4a 38%, #0a84ff 92%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
-      .zero-splash-subtitle {
-        margin: 0 0 14px;
-        font-family: "SF Pro Text", "Inter", "Segoe UI", sans-serif;
-        font-weight: 520;
-        font-size: 11px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        text-align: center;
-        color: #60708b;
+      .zero-splash-tagline {
+        margin: -6px 0 0;
+        font-size: 0.9375rem;
+        font-weight: 400;
+        line-height: 1.45;
+        letter-spacing: -0.015em;
+        color: #4a5b76;
+        max-width: 28ch;
+      }
+      .zero-splash-progress {
+        width: min(200px, 52vw);
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(10, 132, 255, 0.12);
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .zero-splash-progress-bar {
+        display: block;
+        height: 100%;
+        width: 42%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, rgba(10, 132, 255, 0.85), rgba(83, 180, 255, 0.95), transparent);
+        animation: splashProgress 1.35s ease-in-out infinite;
       }
       html[data-theme="dark"] #zero-splash {
-        background:
-          radial-gradient(circle at 20% 16%, #ffffff12 0%, #00000000 46%),
-          radial-gradient(circle at 84% 88%, #0a84ff2d 0%, #00000000 50%),
-          linear-gradient(180deg, #111217 0%, #0b0c10 58%, #090a0e 100%);
+        background-color: #050608;
+        background-image:
+          radial-gradient(ellipse 130% 85% at 50% -35%, rgba(44, 62, 110, 0.35) 0%, transparent 55%),
+          radial-gradient(ellipse 65% 45% at 105% 92%, rgba(10, 132, 255, 0.14) 0%, transparent 50%),
+          radial-gradient(ellipse 50% 40% at -8% 98%, rgba(100, 140, 200, 0.12) 0%, transparent 45%);
+      }
+      html[data-theme="dark"] .zero-splash-blob-a {
+        background: rgba(36, 92, 168, 0.42);
+      }
+      html[data-theme="dark"] .zero-splash-blob-b {
+        background: rgba(58, 108, 178, 0.28);
       }
       html[data-theme="dark"] .zero-splash-title {
-        color: #f4f6ff;
-        text-shadow: none;
+        background: linear-gradient(122deg, #f8fafc 0%, #c8dcfa 42%, #6eb4ff 88%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
-      html[data-theme="dark"] .zero-splash-subtitle {
-        color: #8e8e93;
+      html[data-theme="dark"] .zero-splash-tagline {
+        color: #989fb0;
       }
-      html[data-theme="dark"] .zero-splash-card {
-        background: linear-gradient(145deg, #2a2f43, #1f2436 62%, #171b2a);
-        box-shadow: 0 18px 42px #00000066, inset 0 1px 0 #ffffff22;
+      html[data-theme="dark"] .zero-splash-progress {
+        background: rgba(255, 255, 255, 0.08);
       }
-      html[data-theme="dark"] .zero-splash-logo {
-        color: #ffffff;
+      html[data-theme="dark"] .zero-splash-progress-bar {
+        background: linear-gradient(90deg, transparent, rgba(110, 180, 255, 0.65), rgba(200, 228, 255, 0.9), transparent);
+      }
+      html[data-theme="dark"] .zero-splash-mark {
+        box-shadow:
+          0 28px 56px rgba(0, 0, 0, 0.55),
+          0 10px 24px rgba(10, 132, 255, 0.18),
+          inset 0 1px 0 rgba(255, 255, 255, 0.16);
       }
     </style>
   </head>
   <body>
     <div id="zero-splash" aria-hidden="true">
-      <div>
-        <div class="zero-splash-title">Zero</div>
-        <div class="zero-splash-subtitle">Personal Finance</div>
-        <div class="zero-splash-wrap">
-          <div class="zero-splash-glow"></div>
-          <div class="zero-splash-card">
-            <svg class="zero-splash-logo" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <circle cx="128" cy="136" r="58" fill="none" stroke="currentColor" stroke-width="20"/>
-              <path d="M86 154l31-31 22 22 34-34" fill="none" stroke="#e9f4ff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="171" cy="111" r="8" fill="#f8fcff"/>
+      <div class="zero-splash-blobs">
+        <span class="zero-splash-blob zero-splash-blob-a"></span>
+        <span class="zero-splash-blob zero-splash-blob-b"></span>
+        <span class="zero-splash-blob zero-splash-blob-c"></span>
+      </div>
+      <div class="zero-splash-panel">
+        <div class="zero-splash-mark-wrap">
+          <div class="zero-splash-mark-halo" aria-hidden="true"></div>
+          <div class="zero-splash-mark">
+            <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs>
+                <linearGradient id="splashZBg" x1="36" y1="28" x2="228" y2="236">
+                  <stop offset="0%" stop-color="#5ec4ff"/>
+                  <stop offset="40%" stop-color="#0a84ff"/>
+                  <stop offset="100%" stop-color="#003d99"/>
+                </linearGradient>
+                <radialGradient id="splashZGlow" cx="28%" cy="22%" r="62%">
+                  <stop offset="0%" stop-color="#ffffff52"/>
+                  <stop offset="55%" stop-color="#ffffff00"/>
+                </radialGradient>
+                <linearGradient id="splashZRing" x1="78" y1="76" x2="182" y2="198">
+                  <stop offset="0%" stop-color="#ffffff"/>
+                  <stop offset="100%" stop-color="#bfe0ff"/>
+                </linearGradient>
+              </defs>
+              <rect width="256" height="256" rx="58" fill="url(#splashZBg)"/>
+              <rect width="256" height="256" rx="58" fill="url(#splashZGlow)"/>
+              <ellipse cx="128" cy="134" rx="50" ry="70" fill="none" stroke="url(#splashZRing)" stroke-width="30" stroke-linecap="round"/>
             </svg>
           </div>
+        </div>
+        <div class="zero-splash-text">
+          <h1 class="zero-splash-title">Zero</h1>
+          <p class="zero-splash-tagline">Balance spending, bills, and runway — without the noise.</p>
+        </div>
+        <div class="zero-splash-progress" aria-hidden="true">
+          <span class="zero-splash-progress-bar"></span>
         </div>
       </div>
     </div>
