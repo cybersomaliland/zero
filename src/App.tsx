@@ -1,13 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth, startOfWeek, subWeeks } from "date-fns";
+import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subWeeks } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askGroqFinanceAssistant } from "./ai";
+import { executeAssistantPayload, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
 import { askFinanceAssistant, computeBudgetSnapshot, forecast, getUpcomingBills, money, simulateWhatIfScenario } from "./logic";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
-import { StructuredDayTimeline } from "./StructuredDayTimeline";
+import { IosDayTimeline } from "./IosDayTimeline";
 import { useZeroStore } from "./store";
 import type { Subscription, SubscriptionCycle, TxType } from "./types";
 
@@ -21,7 +22,10 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
   Settings: { icon: "settings", label: "Settings" },
 };
 const DEFAULT_CHAT: Array<{ role: "assistant" | "user"; text: string }> = [
-  { role: "assistant", text: "I am Coach Zero. Ask me what to do today with your money." },
+  {
+    role: "assistant",
+    text: "I'm Coach Zero. Ask about money, or tell me to plan your day, add calendar blocks, checklist tasks, log spending, or complete tasks — I'll apply changes when you ask.",
+  },
 ];
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
@@ -143,6 +147,11 @@ function App() {
   const [showReminderSheet, setShowReminderSheet] = useState(false);
   const [meals, setMeals] = useState<Array<{ id: number; name: string; group?: MealGroup; planned?: boolean; done: boolean; calories: string }>>([]);
   const [tasks, setTasks] = useState<Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>>([]);
+  const [checklistDraft, setChecklistDraft] = useState<{
+    title: string;
+    priority: TaskPriority;
+    category: TimelineCategory;
+  }>({ title: "", priority: "medium", category: "personal" });
   const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplateBlock[]>([]);
   const [planAheadItems, setPlanAheadItems] = useState<PlanAheadItem[]>([]);
   const [routineReminders, setRoutineReminders] = useState<RoutineReminderItem[]>([]);
@@ -176,6 +185,8 @@ function App() {
     }
   });
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  /** Tracks calendar day for checklist rollover (completed tasks drop after midnight). */
+  const routineCalendarDayRef = useRef<string | null>(null);
   const [notifState, setNotifState] = useState<"unsupported" | "default" | "granted" | "denied">(
     "default",
   );
@@ -214,11 +225,34 @@ function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!routineHydrated) return;
+    const key = format(liveNow, "yyyy-MM-dd");
+    if (routineCalendarDayRef.current === null) {
+      routineCalendarDayRef.current = key;
+      return;
+    }
+    if (routineCalendarDayRef.current !== key) {
+      routineCalendarDayRef.current = key;
+      try {
+        localStorage.setItem("zero_routine_tasks_day_v1", key);
+      } catch {
+        // ignore
+      }
+      setTasks((prev) => prev.filter((t) => !t.done));
+    }
+  }, [routineHydrated, liveNow]);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("zero_routine_v1");
       if (!raw) {
-        setRoutineHydrated(true);
+        try {
+          localStorage.setItem("zero_routine_tasks_day_v1", format(new Date(), "yyyy-MM-dd"));
+        } catch {
+          // ignore
+        }
         return;
       }
       const parsed = JSON.parse(raw) as Partial<{
@@ -248,7 +282,41 @@ function App() {
       if (typeof parsed.timelineSortAsc === "boolean") setTimelineSortAsc(parsed.timelineSortAsc);
       if (Array.isArray(parsed.timelineEvents)) setTimelineEvents(parsed.timelineEvents);
       if (Array.isArray(parsed.meals)) setMeals(parsed.meals);
-      if (Array.isArray(parsed.tasks)) setTasks(parsed.tasks);
+      if (Array.isArray(parsed.tasks)) {
+        const todayKey = format(new Date(), "yyyy-MM-dd");
+        let lastTasksDay = "";
+        try {
+          lastTasksDay = localStorage.getItem("zero_routine_tasks_day_v1") ?? "";
+        } catch {
+          // ignore
+        }
+        if (lastTasksDay !== "" && lastTasksDay !== todayKey) {
+          setTasks(parsed.tasks.filter((t) => !t.done));
+        } else {
+          setTasks(parsed.tasks);
+        }
+        try {
+          localStorage.setItem("zero_routine_tasks_day_v1", todayKey);
+        } catch {
+          // ignore
+        }
+      } else {
+        const todayKey = format(new Date(), "yyyy-MM-dd");
+        let lastTasksDay = "";
+        try {
+          lastTasksDay = localStorage.getItem("zero_routine_tasks_day_v1") ?? "";
+        } catch {
+          // ignore
+        }
+        try {
+          localStorage.setItem("zero_routine_tasks_day_v1", todayKey);
+        } catch {
+          // ignore
+        }
+        if (lastTasksDay !== "" && lastTasksDay !== todayKey) {
+          setTasks([]);
+        }
+      }
       if (typeof parsed.reflectionOne === "string") setReflectionOne(parsed.reflectionOne);
       if (typeof parsed.reflectionTwo === "string") setReflectionTwo(parsed.reflectionTwo);
       if (parsed.dayRating === null || [1, 2, 3, 4, 5].includes(parsed.dayRating as number)) setDayRating(parsed.dayRating ?? null);
@@ -554,6 +622,10 @@ function App() {
     () => [...tasks].sort((a, b) => taskPriorityWeight[a.priority] - taskPriorityWeight[b.priority]),
     [tasks],
   );
+  const openChecklistTasks = useMemo(() => todayChecklist.filter((t) => !t.done), [todayChecklist]);
+  const doneChecklistTasks = useMemo(() => todayChecklist.filter((t) => t.done), [todayChecklist]);
+  const checklistProgressPct =
+    tasks.length === 0 ? 0 : Math.round((doneChecklistTasks.length / tasks.length) * 100);
   const tomorrowLabel = format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd");
   const tomorrowPlans = useMemo(
     () => planAheadItems.filter((item) => item.date === tomorrowLabel).sort((a, b) => a.hour - b.hour),
@@ -643,18 +715,26 @@ function App() {
     return `You're on track. ${money(todayRemaining)} left for today.`;
   }, [todaySpent, todayRemaining]);
   const weeklyReviewReport = useMemo(() => {
-    const weekStartsOn = 6; // Saturday
+    const weekStartsOn = 6 as const;
     const now = new Date();
     const thisWeekStart = startOfWeek(now, { weekStartsOn });
-    const thisWeekEnd = endOfWeek(now, { weekStartsOn });
-    const prevWeekStart = subWeeks(thisWeekStart, 1);
-    const prevWeekEnd = subWeeks(thisWeekEnd, 1);
-    const inRange = (iso: string, start: Date, end: Date) => {
+    const thisWeekEndDay = endOfWeek(now, { weekStartsOn });
+    const thisWeekInterval = { start: startOfDay(thisWeekStart), end: endOfDay(thisWeekEndDay) };
+
+    const prevAnchor = subWeeks(now, 1);
+    const prevWeekStart = startOfWeek(prevAnchor, { weekStartsOn });
+    const prevWeekEndDay = endOfWeek(prevAnchor, { weekStartsOn });
+    const prevWeekInterval = { start: startOfDay(prevWeekStart), end: endOfDay(prevWeekEndDay) };
+
+    const dateInInterval = (iso: string, interval: typeof thisWeekInterval) => {
       const d = parseISO(iso);
-      return d >= startOfDay(start) && d <= end;
+      if (!Number.isFinite(+d)) return false;
+      return isWithinInterval(startOfDay(d), interval);
     };
-    const thisWeekTx = transactions.filter((tx) => inRange(tx.date, thisWeekStart, thisWeekEnd));
-    const prevWeekTx = transactions.filter((tx) => inRange(tx.date, prevWeekStart, prevWeekEnd));
+
+    const thisWeekTx = transactions.filter((tx) => dateInInterval(tx.date, thisWeekInterval));
+    const prevWeekTx = transactions.filter((tx) => dateInInterval(tx.date, prevWeekInterval));
+
     const totals = (txs: typeof transactions) => ({
       spent: txs.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(t.amount), 0),
       income: txs.filter((t) => t.type === "income").reduce((sum, t) => sum + Math.abs(t.amount), 0),
@@ -670,15 +750,30 @@ function App() {
         }, {}),
     ).sort((a, b) => b[1] - a[1])[0];
 
-    const snapshots = Object.entries(routineHistory)
-      .map(([day, snapshot]) => ({ day, snapshot }))
-      .filter(({ day }) => {
-        const d = parseISO(day);
-        return !Number.isNaN(+d);
-      });
-    const thisWeekSnaps = snapshots.filter(({ day }) => inRange(day, thisWeekStart, thisWeekEnd));
-    const prevWeekSnaps = snapshots.filter(({ day }) => inRange(day, prevWeekStart, prevWeekEnd));
-    const completionAvg = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
+    const todayKey = format(now, "yyyy-MM-dd");
+    const liveTodaySnapshot: RoutineDaySnapshot = {
+      timelineEvents,
+      tasks,
+      meals,
+      ritualEnergy,
+      dayRating,
+    };
+
+    const thisWeekSnapByDay = new Map(
+      Object.entries(routineHistory)
+        .filter(([day]) => dateInInterval(day, thisWeekInterval))
+        .map(([day, snapshot]) => [day, snapshot]),
+    );
+    if (dateInInterval(todayKey, thisWeekInterval)) {
+      thisWeekSnapByDay.set(todayKey, liveTodaySnapshot);
+    }
+    const thisWeekSnaps = [...thisWeekSnapByDay.entries()].map(([day, snapshot]) => ({ day, snapshot }));
+
+    const prevWeekSnaps = Object.entries(routineHistory)
+      .filter(([day]) => dateInInterval(day, prevWeekInterval))
+      .map(([day, snapshot]) => ({ day, snapshot }));
+
+    const completionStats = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
       const ratios = items
         .map(({ snapshot }) => {
           const total = snapshot.tasks.length;
@@ -687,61 +782,97 @@ function App() {
           return done / total;
         })
         .filter((v): v is number => v !== null);
-      if (ratios.length === 0) return 0;
-      return ratios.reduce((sum, v) => sum + v, 0) / ratios.length;
+      if (ratios.length === 0) return { avg: 0, daysWithTasks: 0 };
+      return {
+        avg: ratios.reduce((sum, v) => sum + v, 0) / ratios.length,
+        daysWithTasks: ratios.length,
+      };
     };
-    const ratingAvg = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
+
+    const ratingStats = (items: Array<{ snapshot: RoutineDaySnapshot }>) => {
       const ratings = items.reduce<number[]>((acc, { snapshot }) => {
         if (typeof snapshot.dayRating === "number") acc.push(snapshot.dayRating);
         return acc;
       }, []);
-      if (ratings.length === 0) return 0;
-      return ratings.reduce((sum, v) => sum + v, 0) / ratings.length;
+      if (ratings.length === 0) return { avg: 0, daysRated: 0 };
+      return {
+        avg: ratings.reduce((sum, v) => sum + v, 0) / ratings.length,
+        daysRated: ratings.length,
+      };
     };
-    const thisCompletion = completionAvg(thisWeekSnaps);
-    const prevCompletion = completionAvg(prevWeekSnaps);
-    const thisRating = ratingAvg(thisWeekSnaps);
-    const prevRating = ratingAvg(prevWeekSnaps);
+
+    const thisCompletion = completionStats(thisWeekSnaps);
+    const prevCompletion = completionStats(prevWeekSnaps);
+    const thisRating = ratingStats(thisWeekSnaps);
+    const prevRating = ratingStats(prevWeekSnaps);
+
+    const routineDaysWithActivity = thisWeekSnaps.filter(
+      ({ snapshot }) =>
+        snapshot.tasks.length > 0 ||
+        snapshot.meals.length > 0 ||
+        snapshot.timelineEvents.length > 0 ||
+        typeof snapshot.dayRating === "number",
+    ).length;
 
     const happened: string[] = [
-      `Money: spent ${money(thisTotals.spent)} and recorded ${money(thisTotals.income)} income this week.`,
-      `Routine: logged ${thisWeekSnaps.length} day snapshot(s), with avg day score ${thisRating > 0 ? thisRating.toFixed(1) : "n/a"}/5.`,
-      `Tasks: average completion was ${Math.round(thisCompletion * 100)}% across days with tasks.`,
+      `Money (Sat–Fri week): expenses ${money(thisTotals.spent)}; income lines logged ${money(thisTotals.income)} for dates in this window.`,
+      `Routine: ${routineDaysWithActivity} day(s) had checklist, meals, timeline, or a rating. Today merges live; older days appear only if this device saved that day. Day rating avg ${thisRating.daysRated > 0 ? `${thisRating.avg.toFixed(1)}/5` : "n/a"} (${thisRating.daysRated} rated).`,
+      thisCompletion.daysWithTasks > 0
+        ? `Tasks: ${thisCompletion.daysWithTasks} day(s) had checklists — avg completion ${Math.round(thisCompletion.avg * 100)}%.`
+        : "Tasks: no checklist snapshots this week yet — use Routine to add items.",
     ];
     if (thisTopCategory) happened.push(`Top spending category: ${thisTopCategory[0]} (${money(thisTopCategory[1])}).`);
 
     const improved: string[] = [];
     if (prevTotals.spent > 0 && thisTotals.spent < prevTotals.spent) {
-      improved.push(`Money improved: weekly spending dropped by ${money(prevTotals.spent - thisTotals.spent)}.`);
+      improved.push(`Money improved: weekly expenses dropped by ${money(prevTotals.spent - thisTotals.spent)} vs last week.`);
     }
-    if (thisCompletion > prevCompletion) {
-      improved.push(`Task rhythm improved: completion rose from ${Math.round(prevCompletion * 100)}% to ${Math.round(thisCompletion * 100)}%.`);
+    if (
+      thisCompletion.daysWithTasks > 0 &&
+      prevCompletion.daysWithTasks > 0 &&
+      thisCompletion.avg > prevCompletion.avg
+    ) {
+      improved.push(
+        `Task rhythm improved: avg completion ${Math.round(prevCompletion.avg * 100)}% → ${Math.round(thisCompletion.avg * 100)}% (both weeks had checklist days).`,
+      );
     }
-    if (thisRating > prevRating && prevRating > 0) {
-      improved.push(`Routine quality improved: day score moved from ${prevRating.toFixed(1)} to ${thisRating.toFixed(1)}.`);
+    if (thisRating.daysRated > 0 && prevRating.daysRated > 0 && thisRating.avg > prevRating.avg) {
+      improved.push(`Routine quality improved: avg day score ${prevRating.avg.toFixed(1)} → ${thisRating.avg.toFixed(1)}.`);
     }
     if (improved.length === 0) {
       improved.push("Consistency held steady. Keep the same structure and tighten one small habit next week.");
     }
 
     const next: string[] = [];
-    if (thisTotals.spent > thisTotals.income && thisTotals.income > 0) {
-      next.push(`Money: keep next week spending below ${money(thisTotals.income)} (your recorded income baseline).`);
+    if (thisTotals.income > 0 && thisTotals.spent > thisTotals.income) {
+      next.push(
+        `Money: expenses exceeded logged income this week — capture every income entry, or compare spending to your real salary in Settings.`,
+      );
     } else {
-      next.push(`Money: protect a weekly cap around ${money(Math.max(0, thisTotals.spent * 0.9 || safePerDay * 7))}.`);
+      const weeklyCapHint =
+        thisTotals.spent > 0 ? Math.max(0, thisTotals.spent * 0.9) : Math.max(0, safePerDay * 7);
+      next.push(
+        `Money: rough weekly guardrail ~${money(weeklyCapHint)} (${thisTotals.spent > 0 ? "~90% of this week's logged expenses" : "daily allowance × 7 — no expenses dated this week"}).`,
+      );
     }
     if (thisTopCategory) {
-      next.push(`Spending focus: reduce ${thisTopCategory[0]} by 10-15% with a simple category cap.`);
+      next.push(`Spending focus: ease off ${thisTopCategory[0]} next week (simple category cap).`);
     }
-    next.push(`Routine/tasks: lock one non-negotiable morning block and aim for ${Math.max(70, Math.round(thisCompletion * 100))}%+ task completion.`);
+    if (thisCompletion.daysWithTasks > 0) {
+      next.push(
+        `Routine/tasks: keep one morning anchor block; aim ~${Math.min(100, Math.max(Math.round(thisCompletion.avg * 100) + 5, 75))}% checklist completion.`,
+      );
+    } else {
+      next.push("Routine/tasks: add a tiny daily checklist (2–3 items) so weekly stats reflect real progress.");
+    }
 
     return {
-      title: `Week review (${format(thisWeekStart, "MMM d")} - ${format(thisWeekEnd, "MMM d")})`,
+      title: `Weekly review · ${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")} (Sat–Fri)`,
       happened,
       improved,
       next,
     };
-  }, [transactions, routineHistory, safePerDay]);
+  }, [transactions, routineHistory, safePerDay, timelineEvents, tasks, meals, dayRating, ritualEnergy]);
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
@@ -1374,32 +1505,57 @@ function App() {
         },
         onToken: (chunk) => {
           streamedAnswer += chunk;
+          const visible = streamedVisibleReply(streamedAnswer);
           if (!streamMounted) {
             streamMounted = true;
-            setChat((c) => [...c, { role: "assistant", text: chunk }]);
+            setChat((c) => [...c, { role: "assistant", text: visible }]);
             return;
           }
           setChat((c) => {
-            if (c.length === 0) return [{ role: "assistant", text: chunk }];
+            if (c.length === 0) return [{ role: "assistant", text: visible }];
             const last = c[c.length - 1];
-            if (last.role !== "assistant") return [...c, { role: "assistant", text: chunk }];
-            return [...c.slice(0, -1), { ...last, text: last.text + chunk }];
+            if (last.role !== "assistant") return [...c, { role: "assistant", text: visible }];
+            return [...c.slice(0, -1), { ...last, text: visible }];
           });
         },
       });
       setAssistantEngine("groq");
       setAssistantEngineReason("");
-      const base = streamedAnswer.trim() || answer;
-      const withActions = actionNotes.length > 0 ? `${base}\n\nActions completed:\n- ${actionNotes.join("\n- ")}` : base;
+      const fullRaw = streamedAnswer.trim() || answer;
+      const { visible: prose, actionsJson } = stripActionMarkers(fullRaw);
+      let automationFooter = "";
+      if (actionsJson) {
+        try {
+          const payload = JSON.parse(actionsJson) as unknown;
+          const res = await executeAssistantPayload(payload, {
+            todayKey: format(liveNow, "yyyy-MM-dd"),
+            setTimelineEvents,
+            setTasks,
+            addTransaction,
+            reloadPlanAhead: async () => {
+              const rows = await db.table("routinePlans").toArray();
+              setPlanAheadItems(rows as PlanAheadItem[]);
+            },
+          });
+          const lines = [...res.applied, ...res.errors.map((e) => `Warning: ${e}`)];
+          if (lines.length) automationFooter = `\n\n—\n${lines.join("\n")}`;
+        } catch (err) {
+          automationFooter = `\n\nWarning: actions could not run (${err instanceof Error ? err.message : "invalid JSON"}).`;
+        }
+      }
+      let combined = `${prose}${automationFooter}`;
+      if (actionNotes.length > 0) {
+        combined = `${combined}\n\nOther actions:\n- ${actionNotes.join("\n- ")}`;
+      }
       setChat((c) => {
         const copy = [...c];
         for (let i = copy.length - 1; i >= 0; i -= 1) {
           if (copy[i].role === "assistant") {
-            copy[i] = { ...copy[i], text: withActions };
+            copy[i] = { ...copy[i], text: combined };
             return copy;
           }
         }
-        return [...copy, { role: "assistant", text: withActions }];
+        return [...copy, { role: "assistant", text: combined }];
       });
     } catch (error) {
       const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
@@ -1780,9 +1936,12 @@ function App() {
             <section className="card">
               <div className="row">
                 <h3>Weekly review report</h3>
-                <p className="muted">Auto-generated</p>
+                <p className="muted">Sat–Fri weeks</p>
               </div>
               <p className="muted">{weeklyReviewReport.title}</p>
+              <p className="muted weekly-review-footnote">
+                Totals use transactions dated in each window. Routine stats blend saved history with today&apos;s live Routine tab.
+              </p>
               <div className="suggestion-list">
                 <p className="muted"><strong>What happened</strong></p>
                 {weeklyReviewReport.happened.map((item) => <p key={`h-${item}`} className="muted">- {item}</p>)}
@@ -1925,9 +2084,9 @@ function App() {
               )}
             </section>
 
-            <section className="card routine-card routine-card-timeline routine-timeline-premium">
+            <section className="card routine-card routine-card-timeline routine-card-timeline-ios">
               <p className="routine-section-kicker">TIMELINE</p>
-              <StructuredDayTimeline
+              <IosDayTimeline
                 events={timelineEvents}
                 liveNow={liveNow}
                 todayKey={format(liveNow, "yyyy-MM-dd")}
@@ -1958,29 +2117,183 @@ function App() {
                   });
                   setShowTimelineSheet(true);
                 }}
-                onReschedule={(id, dateKey, hour, startMinute) => {
-                  setTimelineEvents((prev) =>
-                    prev.map((e) => (e.id === id ? { ...e, date: dateKey, hour, startMinute } : e)),
-                  );
-                }}
               />
             </section>
 
-            <section className="card routine-card routine-card-checklist">
+            <section className="card routine-card routine-card-checklist checklist-board">
               <p className="routine-section-kicker">DAILY CHECKLIST</p>
-              <div className="row routine-card-head">
-                <h3>Today's tasks</h3>
-                <span className="badge">{doneTasks} of {tasks.length} done</span>
-              </div>
-              {todayChecklist.map((task) => (
-                <div key={task.id} className="routine-row">
-                  <label className="routine-check-item">
-                    <input type="checkbox" checked={task.done} onChange={() => setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, done: !t.done } : t))} />
-                    <span style={{ textDecoration: task.done ? "line-through" : "none" }}>{task.title}</span>
-                  </label>
-                  <span className="routine-check-pill">{task.priority}</span>
+              <div className="checklist-board-head">
+                <div>
+                  <h3>Today&apos;s focus</h3>
+                  <p className="muted checklist-board-lede">
+                    A short list beats a long one — capture priorities and clear them in order. Done items disappear on the next calendar day; open items carry forward.
+                  </p>
                 </div>
-              ))}
+                <div className="checklist-board-stat" aria-live="polite">
+                  <span className="checklist-board-stat-value">{checklistProgressPct}%</span>
+                  <span className="muted checklist-board-stat-caption">{doneTasks}/{tasks.length || 0}</span>
+                </div>
+              </div>
+              <div className="routine-progress-track checklist-board-meter" role="progressbar" aria-valuenow={checklistProgressPct} aria-valuemin={0} aria-valuemax={100} aria-label="Checklist completion">
+                <div className="routine-progress-fill" style={{ width: `${checklistProgressPct}%` }} />
+              </div>
+
+              <form
+                className="checklist-composer"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const title = checklistDraft.title.trim();
+                  if (!title) return;
+                  setTasks((prev) => [
+                    ...prev,
+                    {
+                      id: Date.now(),
+                      title,
+                      priority: checklistDraft.priority,
+                      category: checklistDraft.category,
+                      done: false,
+                    },
+                  ]);
+                  setChecklistDraft((d) => ({ ...d, title: "" }));
+                }}
+              >
+                <label className="checklist-composer-field">
+                  <span className="muted checklist-composer-label">New task</span>
+                  <input
+                    value={checklistDraft.title}
+                    onChange={(e) => setChecklistDraft((d) => ({ ...d, title: e.target.value }))}
+                    placeholder="e.g. Deep work · Reply invoices · Walk"
+                    autoComplete="off"
+                  />
+                </label>
+                <div className="checklist-composer-pickers">
+                  <div className="checklist-picker-group">
+                    <span className="muted checklist-picker-heading">Priority</span>
+                    <div className="task-filter-row checklist-segment">
+                      {(["high", "medium", "low"] as const).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className={checklistDraft.priority === p ? "active" : ""}
+                          onClick={() => setChecklistDraft((d) => ({ ...d, priority: p }))}
+                        >
+                          {p === "high" ? "High" : p === "medium" ? "Med" : "Low"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="checklist-picker-group">
+                    <span className="muted checklist-picker-heading">Area</span>
+                    <div className="task-filter-row checklist-segment">
+                      {(["work", "health", "personal"] as const).map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          className={checklistDraft.category === c ? "active" : ""}
+                          onClick={() => setChecklistDraft((d) => ({ ...d, category: c }))}
+                        >
+                          {c[0].toUpperCase() + c.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <button type="submit" className="checklist-composer-submit">
+                  Add to checklist
+                </button>
+              </form>
+
+              {tasks.length === 0 && (
+                <div className="routine-empty checklist-board-empty">
+                  <p><strong>Nothing listed yet</strong></p>
+                  <p className="muted">Add one must-do above, or ask Coach Zero for suggestions from the assistant panel.</p>
+                </div>
+              )}
+
+              {openChecklistTasks.length > 0 && (
+                <div className="checklist-board-section">
+                  <p className="checklist-board-section-title">Up next</p>
+                  <ul className="checklist-board-list">
+                    {openChecklistTasks.map((task) => (
+                      <li key={task.id} className={`checklist-board-item checklist-board-item--${task.category}`}>
+                        <button
+                          type="button"
+                          className="checklist-board-check"
+                          aria-checked={false}
+                          role="checkbox"
+                          aria-label={`Mark complete: ${task.title}`}
+                          onClick={() =>
+                            setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, done: true } : t)))
+                          }
+                        />
+                        <div className="checklist-board-item-body">
+                          <span className="checklist-board-item-title">{task.title}</span>
+                          <div className="checklist-board-item-meta">
+                            <span className={`task-meta ${task.priority}`}>{task.priority}</span>
+                            <span className="checklist-board-cat">{task.category}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost-btn checklist-board-remove"
+                          aria-label={`Remove task: ${task.title}`}
+                          onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {doneChecklistTasks.length > 0 && (
+                <div className="checklist-board-section checklist-board-section--done">
+                  <p className="checklist-board-section-title muted">Completed</p>
+                  <ul className="checklist-board-list">
+                    {doneChecklistTasks.map((task) => (
+                      <li key={task.id} className={`checklist-board-item checklist-board-item--done checklist-board-item--${task.category}`}>
+                        <button
+                          type="button"
+                          className="checklist-board-check checklist-board-check--done"
+                          aria-checked={true}
+                          role="checkbox"
+                          aria-label={`Mark incomplete: ${task.title}`}
+                          onClick={() =>
+                            setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, done: false } : t)))
+                          }
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M6 12.5 10 16.5 18 8.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                        <div className="checklist-board-item-body">
+                          <span className="checklist-board-item-title checklist-board-item-title--done">{task.title}</span>
+                          <div className="checklist-board-item-meta">
+                            <span className={`task-meta ${task.priority}`}>{task.priority}</span>
+                            <span className="checklist-board-cat">{task.category}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost-btn checklist-board-remove"
+                          aria-label={`Remove task: ${task.title}`}
+                          onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {tasks.length > 0 && doneTasks === tasks.length && (
+                <div className="routine-celebration checklist-board-celebration">
+                  <h4>Checklist clear</h4>
+                  <p>You closed every item today — carry that momentum into tomorrow&apos;s first block.</p>
+                </div>
+              )}
             </section>
 
             <section className="card routine-card routine-card-template">
@@ -2486,7 +2799,19 @@ function App() {
               <button type="button" onClick={() => {
                 void askAssistant("Give me today's plan in 3 steps.");
               }}>
-                Today's plan
+                Today&apos;s plan
+              </button>
+              <button type="button" onClick={() => {
+                void askAssistant(
+                  `Plan my whole day from now — schedule blocks on my timeline for today (${format(liveNow, "yyyy-MM-dd")}), add 3 realistic checklist tasks, and suggest one planned expense amount that fits my remaining daily allowance. Apply everything.`,
+                );
+              }}>
+                Plan day + apply
+              </button>
+              <button type="button" onClick={() => {
+                void askAssistant("Log a $12.50 expense for lunch under Food & Drink today and add a 30-minute lunch block at noon on my timeline.");
+              }}>
+                Sample log + block
               </button>
               <button type="button" onClick={() => {
                 void askAssistant("Can I spend on a meal today?");
