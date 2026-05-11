@@ -21,6 +21,29 @@ export type Subscription = {
   createdAt: string;
 };
 
+export type RecurringIncomeCycle = "weekly" | "biweekly" | "monthly";
+
+export type RecurringIncome = {
+  id?: number;
+  name: string;
+  amount: number;
+  cycle: RecurringIncomeCycle;
+  nextDate: string;
+  createdAt: string;
+};
+
+export type PlannedCashflowKind = "planned_expense" | "savings_transfer";
+
+export type PlannedCashflowItem = {
+  id?: number;
+  title: string;
+  amount: number;
+  kind: PlannedCashflowKind;
+  date: string;
+  category?: string;
+  createdAt: string;
+};
+
 /** Push types aligned with server `buildNotification` keys. */
 export type PushNotificationKind =
   | "bill_due_tomorrow"
@@ -47,6 +70,7 @@ export type Settings = {
   monthlySalary: number;
   currentBalance: number;
   reservedSavings: number;
+  forecastRiskThreshold?: number;
   monthlyTargets: Record<string, number>;
   categoryLimits: Record<string, number>;
   /** Custom wording for web push; synced to server with notification context. */

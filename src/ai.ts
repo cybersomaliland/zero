@@ -1,4 +1,10 @@
-import type { Settings, Subscription, Transaction } from "./types";
+import type {
+  PlannedCashflowItem,
+  RecurringIncome,
+  Settings,
+  Subscription,
+  Transaction,
+} from "./types";
 
 function parseDateSafe(input: string) {
   const d = new Date(input);
@@ -10,8 +16,19 @@ export async function askGroqFinanceAssistant(params: {
   chatHistory: Array<{ role: "assistant" | "user"; text: string }>;
   transactions: Transaction[];
   subscriptions: Subscription[];
+  recurringIncome: RecurringIncome[];
+  plannedCashflows: PlannedCashflowItem[];
   settings: Settings;
   forecastData: Array<{ date: string; balance: number }>;
+  cashflowForecastSummary: {
+    threshold: number;
+    baselineDailySpend: number;
+    lowestPoint: { date: string; balance: number } | null;
+    nextRiskDay: { date: string; balance: number } | null;
+    nextPayday: { date: string; label: string; amount: number } | null;
+    riskDays: Array<{ date: string; balance: number }>;
+    upcomingEvents: Array<{ date: string; label: string; amount: number; kind: string }>;
+  };
   financeSnapshot: {
     monthlySalary: number;
     currentBalance: number;
@@ -204,6 +221,11 @@ export async function askGroqFinanceAssistant(params: {
       subscriptionsMonthlyRunRate: Number(subscriptionsMonthlyRunRate.toFixed(2)),
       nearestForecastPoint,
       lowestForecastPoint,
+    },
+    cashflowForecast: {
+      ...params.cashflowForecastSummary,
+      recurringIncome: params.recurringIncome.slice(0, 12),
+      plannedCashflows: params.plannedCashflows.slice(0, 20),
     },
     recentTransactions,
     upcomingSubscriptions,

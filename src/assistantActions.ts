@@ -1,6 +1,13 @@
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
+import type {
+  PlannedCashflowKind,
+  RecurringIncomeCycle,
+  Settings,
+  SubscriptionCycle,
+  TxType,
+} from "./types";
 
 export const ZERO_ACTIONS_OPEN = "<<<ZERO_ACTIONS>>>";
 export const ZERO_ACTIONS_CLOSE = "<<<END_ZERO_ACTIONS>>>";
@@ -13,6 +20,14 @@ export type AssistantExecutors<TimelineEvent, Task extends { id: number; title: 
   todayKey: string;
   setTimelineEvents: (updater: (prev: TimelineEvent[]) => TimelineEvent[]) => void;
   setTasks: (updater: (prev: Task[]) => Task[]) => void;
+  getTransactions: () => Array<{
+    id?: number;
+    amount: number;
+    type: TxType;
+    category: string;
+    note?: string;
+    date: string;
+  }>;
   addTransaction: (row: {
     amount: number;
     type: "expense" | "income";
@@ -20,6 +35,27 @@ export type AssistantExecutors<TimelineEvent, Task extends { id: number; title: 
     note?: string;
     date: string;
   }) => Promise<void>;
+  deleteTransaction: (id: number) => Promise<void>;
+  addSubscription: (row: {
+    name: string;
+    amount: number;
+    cycle: SubscriptionCycle;
+    nextBillingDate: string;
+  }) => Promise<void>;
+  addRecurringIncome: (row: {
+    name: string;
+    amount: number;
+    cycle: RecurringIncomeCycle;
+    nextDate: string;
+  }) => Promise<void>;
+  addPlannedCashflow: (row: {
+    title: string;
+    amount: number;
+    kind: PlannedCashflowKind;
+    date: string;
+    category?: string;
+  }) => Promise<void>;
+  updateSettings: (row: Partial<Settings>) => Promise<void>;
   reloadPlanAhead: () => Promise<void>;
 };
 
@@ -41,6 +77,21 @@ function normalizePriority(raw: unknown): "high" | "medium" | "low" {
   return "medium";
 }
 
+function normalizeSubscriptionCycle(raw: unknown): SubscriptionCycle | null {
+  if (raw === "weekly" || raw === "monthly" || raw === "yearly") return raw;
+  return null;
+}
+
+function normalizeRecurringIncomeCycle(raw: unknown): RecurringIncomeCycle | null {
+  if (raw === "weekly" || raw === "biweekly" || raw === "monthly") return raw;
+  return null;
+}
+
+function normalizePlannedCashflowKind(raw: unknown): PlannedCashflowKind | null {
+  if (raw === "planned_expense" || raw === "savings_transfer") return raw;
+  return null;
+}
+
 function pickTxCategory(raw: unknown): string {
   const t = String(raw ?? "").trim();
   if (!t) return "General";
@@ -51,6 +102,10 @@ function pickTxCategory(raw: unknown): string {
       c.toLowerCase().includes(t.toLowerCase()) || t.toLowerCase().includes(c.toLowerCase()),
   );
   return embed ?? getCategoryDefinition(t).name;
+}
+
+function asIsoDayOrToday(raw: unknown, todayKey: string) {
+  return isIsoDay(raw) ? raw : todayKey;
 }
 
 export function stripActionMarkers(fullText: string): { visible: string; actionsJson: string | null } {
@@ -311,6 +366,117 @@ export async function executeAssistantPayload<
         });
         await exec.reloadPlanAhead();
         applied.push(`Plan ahead: “${title}” on ${date}.`);
+        continue;
+      }
+
+      if (type === "add_subscription") {
+        const name = String(act.name ?? "").trim().slice(0, 120);
+        const amount = Math.min(Math.abs(Number(act.amount) || 0), MAX_TX_AMOUNT);
+        const cycle = normalizeSubscriptionCycle(act.cycle);
+        const nextBillingDate = act.nextBillingDate;
+        if (!name || amount <= 0 || !cycle || !isIsoDay(nextBillingDate)) {
+          errors.push("add_subscription: need name, amount, cycle, and nextBillingDate.");
+          continue;
+        }
+        await exec.addSubscription({
+          name,
+          amount,
+          cycle,
+          nextBillingDate: new Date(nextBillingDate).toISOString(),
+        });
+        applied.push(`Added subscription “${name}” (${cycle}, $${amount.toFixed(2)}).`);
+        continue;
+      }
+
+      if (type === "add_recurring_income") {
+        const name = String(act.name ?? "").trim().slice(0, 120);
+        const amount = Math.min(Math.abs(Number(act.amount) || 0), MAX_TX_AMOUNT);
+        const cycle = normalizeRecurringIncomeCycle(act.cycle);
+        const nextDate = act.nextDate;
+        if (!name || amount <= 0 || !cycle || !isIsoDay(nextDate)) {
+          errors.push("add_recurring_income: need name, amount, cycle, and nextDate.");
+          continue;
+        }
+        await exec.addRecurringIncome({
+          name,
+          amount,
+          cycle,
+          nextDate: new Date(nextDate).toISOString(),
+        });
+        applied.push(`Added recurring income “${name}” (${cycle}, $${amount.toFixed(2)}).`);
+        continue;
+      }
+
+      if (type === "add_planned_cashflow") {
+        const title = String(act.title ?? "").trim().slice(0, 160);
+        const amount = Math.min(Math.abs(Number(act.amount) || 0), MAX_TX_AMOUNT);
+        const kind = normalizePlannedCashflowKind(act.kind);
+        const date = act.date;
+        const category = String(act.category ?? "").trim().slice(0, 80);
+        if (!title || amount <= 0 || !kind || !isIsoDay(date)) {
+          errors.push("add_planned_cashflow: need title, amount, kind, and date.");
+          continue;
+        }
+        await exec.addPlannedCashflow({
+          title,
+          amount,
+          kind,
+          date: new Date(date).toISOString(),
+          category: category || undefined,
+        });
+        applied.push(`Added ${kind === "savings_transfer" ? "savings transfer" : "planned expense"} “${title}”.`);
+        continue;
+      }
+
+      if (type === "set_forecast_risk_threshold") {
+        const amount = Math.max(0, Math.min(MAX_TX_AMOUNT, Number(act.amount) || 0));
+        await exec.updateSettings({ forecastRiskThreshold: amount });
+        applied.push(`Set risk threshold to $${amount.toFixed(2)}.`);
+        continue;
+      }
+
+      if (type === "merge_transactions_to_summary") {
+        const dateStart = act.date_start;
+        const dateEnd = act.date_end;
+        const txType = act.tx_type === "income" ? "income" : "expense";
+        const matchCategory = String(act.match_category ?? "").trim().toLowerCase();
+        const matchNote = String(act.match_note ?? "").trim().toLowerCase();
+        const summaryNote = String(act.summary_note ?? "").trim().slice(0, 240);
+        const summaryCategory = pickTxCategory(act.summary_category ?? act.match_category);
+        const summaryDate = asIsoDayOrToday(act.summary_date, exec.todayKey);
+        if (!isIsoDay(dateStart) || !isIsoDay(dateEnd)) {
+          errors.push("merge_transactions_to_summary: need date_start and date_end.");
+          continue;
+        }
+        if (!matchCategory && !matchNote) {
+          errors.push("merge_transactions_to_summary: need match_category or match_note.");
+          continue;
+        }
+        const matches = exec.getTransactions().filter((tx) => {
+          if (!tx.id) return false;
+          if (tx.type !== txType) return false;
+          const day = format(parseISO(tx.date), "yyyy-MM-dd");
+          if (day < dateStart || day > dateEnd) return false;
+          if (matchCategory && !String(tx.category || "").toLowerCase().includes(matchCategory)) return false;
+          if (matchNote && !String(tx.note || "").toLowerCase().includes(matchNote)) return false;
+          return true;
+        });
+        if (matches.length < 2) {
+          errors.push("merge_transactions_to_summary: need at least 2 matching transactions.");
+          continue;
+        }
+        const totalAmount = matches.reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+        for (const tx of matches) {
+          await exec.deleteTransaction(tx.id!);
+        }
+        await exec.addTransaction({
+          amount: totalAmount,
+          type: txType,
+          category: summaryCategory,
+          note: summaryNote || `Summary for ${matches.length} ${summaryCategory} transaction(s)`,
+          date: summaryDate,
+        });
+        applied.push(`Merged ${matches.length} ${txType} transaction(s) into one summary for ${summaryCategory}.`);
         continue;
       }
 

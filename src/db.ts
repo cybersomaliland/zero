@@ -1,9 +1,18 @@
 import Dexie, { type Table } from "dexie";
-import type { CategoryRule, Settings, Subscription, Transaction } from "./types";
+import type {
+  CategoryRule,
+  PlannedCashflowItem,
+  RecurringIncome,
+  Settings,
+  Subscription,
+  Transaction,
+} from "./types";
 
 class ZeroDB extends Dexie {
   transactions!: Table<Transaction, number>;
   subscriptions!: Table<Subscription, number>;
+  recurringIncome!: Table<RecurringIncome, number>;
+  plannedCashflows!: Table<PlannedCashflowItem, number>;
   settings!: Table<Settings, number>;
   categoryRules!: Table<CategoryRule, number>;
   routinePlans!: Table<{ id?: number; date: string; title: string; hour: number; category: string; createdAt: string }, number>;
@@ -51,6 +60,23 @@ class ZeroDB extends Dexie {
       categoryRules: "++id, keyword, category, updatedAt",
       routinePlans: "++id, date, hour, category, createdAt",
     });
+    this.version(5)
+      .stores({
+        transactions: "++id, date, type, category, createdAt",
+        subscriptions: "++id, nextBillingDate, cycle, createdAt",
+        recurringIncome: "++id, nextDate, cycle, createdAt",
+        plannedCashflows: "++id, date, kind, createdAt",
+        settings: "id",
+        categoryRules: "++id, keyword, category, updatedAt",
+        routinePlans: "++id, date, hour, category, createdAt",
+      })
+      .upgrade((tx) => {
+        return tx.table("settings").toCollection().modify((setting) => {
+          if (typeof setting.forecastRiskThreshold !== "number") {
+            setting.forecastRiskThreshold = typeof setting.reservedSavings === "number" ? setting.reservedSavings : 0;
+          }
+        });
+      });
   }
 }
 
@@ -95,6 +121,7 @@ export async function seedIfEmpty() {
       monthlySalary: 0,
       currentBalance: 0,
       reservedSavings: 0,
+      forecastRiskThreshold: 0,
       monthlyTargets: { "Food & Drink": 300, Transport: 180, Subscriptions: 100 },
       categoryLimits: { "Food & Drink": 260, Transport: 150 },
     });

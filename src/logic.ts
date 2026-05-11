@@ -16,8 +16,9 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
+import { buildCashflowForecast } from "./cashflow";
 import { inferCategoryFromText } from "./categories";
-import type { Settings, Subscription, Transaction } from "./types";
+import type { PlannedCashflowItem, RecurringIncome, Settings, Subscription, Transaction } from "./types";
 
 const WEEK_STARTS_ON = 6; // Saturday
 
@@ -177,25 +178,25 @@ export function generateInsights(transactions: Transaction[], subscriptions: Sub
   return items;
 }
 
-export function forecast(transactions: Transaction[], subscriptions: Subscription[], settings: Settings, horizonDays = 60) {
-  const avgDaily = transactions
-    .filter((t) => t.type === "expense")
-    .reduce((acc, t) => acc + Math.abs(t.amount), 0) / Math.max(1, transactions.filter((t) => t.type === "expense").length);
-  const recurringIncome = transactions.filter((t) => t.type === "income").reduce((acc, t) => acc + t.amount, 0) / 30;
-  let balance = settings.currentBalance;
-
-  const points = [];
-  for (let i = 0; i <= horizonDays; i += 3) {
-    const d = addDays(new Date(), i);
-    const subCost = subscriptions.reduce((acc, s) => {
-      const next = parseISO(s.nextBillingDate);
-      const inWindow = differenceInCalendarDays(next, d) >= 0 && differenceInCalendarDays(next, d) <= 3;
-      return acc + (inWindow ? s.amount : 0);
-    }, 0);
-    balance = balance + recurringIncome * 3 - avgDaily * 3 - subCost;
-    points.push({ date: format(d, "MMM d"), balance: Number(balance.toFixed(2)) });
-  }
-  return points;
+export function forecast(
+  transactions: Transaction[],
+  subscriptions: Subscription[],
+  recurringIncome: RecurringIncome[],
+  plannedCashflows: PlannedCashflowItem[],
+  settings: Settings,
+  horizonDays = 30,
+) {
+  return buildCashflowForecast({
+    transactions,
+    subscriptions,
+    recurringIncome,
+    plannedCashflows,
+    settings,
+    horizonDays,
+  }).points.map((point) => ({
+    date: point.label,
+    balance: point.balance,
+  }));
 }
 
 export function nextDateFromCycle(date: string, cycle: Subscription["cycle"]) {
@@ -260,7 +261,7 @@ export function askFinanceAssistant(
     const firstAffordable = forecastData.find((p) => p.balance - settings.reservedSavings >= amount);
     if (firstAffordable) {
       const idx = forecastData.indexOf(firstAffordable);
-      const approxDays = idx * 3;
+      const approxDays = idx;
       return `Not today. Meal: ${money(amount)} and your safe-to-spend now is about ${money(safeToday)}. Based on your cash-flow trend, you can likely buy it in around ${approxDays} day(s) (near ${firstAffordable.date}) while staying within your buffer.`;
     }
     return `Not currently affordable with your present plan. Meal: ${money(amount)}, safe-to-spend now: ${money(safeToday)}. You may need to reduce variable spending or wait for the next income cycle.`;

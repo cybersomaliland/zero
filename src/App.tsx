@@ -3,6 +3,7 @@ import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endO
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
+import { buildCashflowForecast } from "./cashflow";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
 import { db } from "./db";
 import {
@@ -10,7 +11,6 @@ import {
   computeBudgetSnapshot,
   countOverBudgetDaysInMonth,
   countSubscriptionsDueThisWeek,
-  forecast,
   getUpcomingBills,
   money,
   nextDateFromCycle,
@@ -21,6 +21,7 @@ import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
 import { BiometricLockScreen } from "./BiometricLockScreen";
 import { IosDayTimeline } from "./IosDayTimeline";
+import { detectSubscriptionCandidates } from "./subscriptionDetection";
 import { useZeroStore } from "./store";
 import { clearBadge, updateBadge } from "./utils/badge";
 import {
@@ -32,7 +33,16 @@ import {
   bioLockRegister,
 } from "./webauthnLock";
 import { PUSH_NOTIFICATION_KIND_META } from "./pushNotificationCopy";
-import type { PushNotificationKind, Subscription, SubscriptionCycle, TxType } from "./types";
+import type {
+  PlannedCashflowItem,
+  PlannedCashflowKind,
+  PushNotificationKind,
+  RecurringIncome,
+  RecurringIncomeCycle,
+  Subscription,
+  SubscriptionCycle,
+  TxType,
+} from "./types";
 
 /** Background refresh while the app is open (Open-Meteo updates on model cadence; this keeps UI current). */
 const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -51,6 +61,41 @@ const tabMeta: Record<Tab, { icon: "home" | "activity" | "subscriptions" | "insi
 type TimelineCategory = "work" | "health" | "personal";
 type TaskPriority = "high" | "medium" | "low";
 type ThemePreference = "system" | "light" | "dark";
+const STREAK_DAY_SURFACES: Array<Pick<CSSProperties, "background" | "boxShadow">> = [
+  {
+    background: "linear-gradient(145deg, #ff7a7a, #ef4444)",
+    boxShadow: "0 8px 18px rgba(239, 68, 68, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #fb923c, #f97316)",
+    boxShadow: "0 8px 18px rgba(249, 115, 22, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #facc15, #eab308)",
+    boxShadow: "0 8px 18px rgba(234, 179, 8, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #4ade80, #22c55e)",
+    boxShadow: "0 8px 18px rgba(34, 197, 94, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #2dd4bf, #14b8a6)",
+    boxShadow: "0 8px 18px rgba(20, 184, 166, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #60a5fa, #3b82f6)",
+    boxShadow: "0 8px 18px rgba(59, 130, 246, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #a78bfa, #8b5cf6)",
+    boxShadow: "0 8px 18px rgba(139, 92, 246, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+  {
+    background: "linear-gradient(145deg, #f472b6, #ec4899)",
+    boxShadow: "0 8px 18px rgba(236, 72, 153, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.52)",
+  },
+];
+
 type TimelineEvent = {
   id: number;
   title: string;
@@ -102,6 +147,46 @@ type WhatIfScenarioRecord = {
   totalSavings: number;
   createdAt: string;
 };
+type RecurringIncomeDraft = {
+  id: number | null;
+  name: string;
+  amount: string;
+  cycle: RecurringIncomeCycle;
+  nextDate: string;
+};
+type PlannedCashflowDraft = {
+  id: number | null;
+  title: string;
+  amount: string;
+  kind: PlannedCashflowKind;
+  date: string;
+  category: string;
+};
+
+function todayInputValue() {
+  return format(new Date(), "yyyy-MM-dd");
+}
+
+function createEmptyRecurringIncomeDraft(): RecurringIncomeDraft {
+  return {
+    id: null,
+    name: "",
+    amount: "",
+    cycle: "monthly",
+    nextDate: todayInputValue(),
+  };
+}
+
+function createEmptyPlannedCashflowDraft(): PlannedCashflowDraft {
+  return {
+    id: null,
+    title: "",
+    amount: "",
+    kind: "planned_expense",
+    date: todayInputValue(),
+    category: "",
+  };
+}
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -115,7 +200,30 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 function App() {
-  const { loading, transactions, subscriptions, settings, init, addTransaction, deleteTransaction, updateTransaction, addSubscription, updateSubscription, addTransactionsBulk, updateSettings, clearData, recategorizeTransactions } = useZeroStore();
+  const {
+    loading,
+    transactions,
+    subscriptions,
+    recurringIncome,
+    plannedCashflows,
+    settings,
+    init,
+    addTransaction,
+    deleteTransaction,
+    updateTransaction,
+    addSubscription,
+    updateSubscription,
+    addRecurringIncome,
+    updateRecurringIncome,
+    deleteRecurringIncome,
+    addPlannedCashflow,
+    updatePlannedCashflow,
+    deletePlannedCashflow,
+    addTransactionsBulk,
+    updateSettings,
+    clearData,
+    recategorizeTransactions,
+  } = useZeroStore();
   const [tab, setTab] = useState<Tab>("Home");
   const [showTx, setShowTx] = useState(false);
   const [showSub, setShowSub] = useState(false);
@@ -173,6 +281,19 @@ function App() {
       if (!raw) return [];
       const parsed = JSON.parse(raw) as WhatIfScenarioRecord[];
       return Array.isArray(parsed) ? parsed.slice(0, 12) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [incomeDraft, setIncomeDraft] = useState<RecurringIncomeDraft>(() => createEmptyRecurringIncomeDraft());
+  const [incomeDraftError, setIncomeDraftError] = useState("");
+  const [plannedCashflowDraft, setPlannedCashflowDraft] = useState<PlannedCashflowDraft>(() => createEmptyPlannedCashflowDraft());
+  const [plannedCashflowDraftError, setPlannedCashflowDraftError] = useState("");
+  const [dismissedSubscriptionSuggestions, setDismissedSubscriptionSuggestions] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("zero_subscription_detection_dismissed_v1");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 200) : [];
     } catch {
       return [];
     }
@@ -607,6 +728,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem("zero_what_if_scenarios_v1", JSON.stringify(whatIfScenarios.slice(0, 12)));
   }, [whatIfScenarios]);
+  useEffect(() => {
+    localStorage.setItem(
+      "zero_subscription_detection_dismissed_v1",
+      JSON.stringify(dismissedSubscriptionSuggestions.slice(0, 200)),
+    );
+  }, [dismissedSubscriptionSuggestions]);
 
   useEffect(() => {
     if (!assistantOpen) return;
@@ -755,9 +882,40 @@ function App() {
   const weeklyIncome = budgetSnapshot.weeklyIncome;
   const weeklyUpcomingSubs = budgetSnapshot.weeklyUpcomingSubs;
   const upcoming = useMemo(() => getUpcomingBills(subscriptions), [subscriptions]);
+  const cashflowForecast = useMemo(
+    () => (
+      settings
+        ? buildCashflowForecast({
+          transactions,
+          subscriptions,
+          recurringIncome,
+          plannedCashflows,
+          settings,
+          horizonDays: 30,
+        })
+        : null
+    ),
+    [transactions, subscriptions, recurringIncome, plannedCashflows, settings],
+  );
   const forecastData = useMemo(
-    () => (settings ? forecast(transactions, subscriptions, settings) : []),
-    [transactions, subscriptions, settings],
+    () => cashflowForecast?.points.map((point) => ({ date: point.label, balance: point.balance })) ?? [],
+    [cashflowForecast],
+  );
+  const forecastRiskPreview = useMemo(
+    () => cashflowForecast?.riskDays.slice(0, 4) ?? [],
+    [cashflowForecast],
+  );
+  const forecastEventPreview = useMemo(
+    () => cashflowForecast?.upcomingEvents.slice(0, 6) ?? [],
+    [cashflowForecast],
+  );
+  const subscriptionSuggestions = useMemo(
+    () => detectSubscriptionCandidates(
+      transactions,
+      subscriptions,
+      new Set(dismissedSubscriptionSuggestions),
+    ),
+    [transactions, subscriptions, dismissedSubscriptionSuggestions],
   );
   const spendingCalendar = useMemo(() => {
     const now = new Date();
@@ -862,15 +1020,11 @@ function App() {
       streakAtRisk: streakAtRiskFlag,
     };
   }, [transactions, routineHistory, liveNow, timelineEvents, tasks, meals, dayRating]);
-  /** Hue shifts once per calendar day so the streak badge feels fresh daily. */
+  /** Rotate through a vivid palette so the streak badge looks clearly different each day. */
   const streakIconSurfaceStyle = useMemo((): CSSProperties => {
     const dayIndex = differenceInCalendarDays(startOfDay(liveNow), startOfDay(new Date(2020, 0, 1)));
-    const h1 = ((dayIndex * 53) % 360 + 360) % 360;
-    const h2 = (h1 + 28 + (dayIndex % 6) * 11) % 360;
-    return {
-      background: `linear-gradient(145deg, hsl(${h1}, 88%, 58%), hsl(${h2}, 84%, 46%))`,
-      boxShadow: `0 8px 18px hsla(${h2}, 82%, 38%, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.52)`,
-    };
+    const paletteIndex = ((dayIndex % STREAK_DAY_SURFACES.length) + STREAK_DAY_SURFACES.length) % STREAK_DAY_SURFACES.length;
+    return STREAK_DAY_SURFACES[paletteIndex];
   }, [liveNow]);
   const sortedTimelineEvents = useMemo(() => {
     const tk = format(liveNow, "yyyy-MM-dd");
@@ -1798,8 +1952,37 @@ function App() {
         chatHistory: historyBeforeQuestion,
         transactions,
         subscriptions,
+        recurringIncome,
+        plannedCashflows,
         settings,
         forecastData,
+        cashflowForecastSummary: {
+          threshold: cashflowForecast?.threshold ?? 0,
+          baselineDailySpend: cashflowForecast?.baselineDailySpend ?? 0,
+          lowestPoint: cashflowForecast?.lowestPoint
+            ? { date: cashflowForecast.lowestPoint.date, balance: cashflowForecast.lowestPoint.balance }
+            : null,
+          nextRiskDay: cashflowForecast?.nextRiskDay
+            ? { date: cashflowForecast.nextRiskDay.date, balance: cashflowForecast.nextRiskDay.balance }
+            : null,
+          nextPayday: cashflowForecast?.nextPayday
+            ? {
+              date: cashflowForecast.nextPayday.date,
+              label: cashflowForecast.nextPayday.label,
+              amount: cashflowForecast.nextPayday.amount,
+            }
+            : null,
+          riskDays: (cashflowForecast?.riskDays ?? []).slice(0, 8).map((point) => ({
+            date: point.date,
+            balance: point.balance,
+          })),
+          upcomingEvents: (cashflowForecast?.upcomingEvents ?? []).slice(0, 12).map((event) => ({
+            date: event.date,
+            label: event.label,
+            amount: event.amount,
+            kind: event.kind,
+          })),
+        },
         financeSnapshot: {
           monthlySalary,
           currentBalance: realBalance,
@@ -1889,7 +2072,13 @@ function App() {
             todayKey: format(liveNow, "yyyy-MM-dd"),
             setTimelineEvents,
             setTasks,
+            getTransactions: () => useZeroStore.getState().transactions,
             addTransaction,
+            deleteTransaction,
+            addSubscription,
+            addRecurringIncome,
+            addPlannedCashflow,
+            updateSettings,
             reloadPlanAhead: async () => {
               const rows = await db.table("routinePlans").toArray();
               setPlanAheadItems(rows as PlanAheadItem[]);
@@ -1937,6 +2126,83 @@ function App() {
     () => (settings ? simulateWhatIfScenario(builderScenarioQuestion, transactions, subscriptions, settings) : null),
     [builderScenarioQuestion, settings, transactions, subscriptions],
   );
+
+  const resetIncomeDraft = useCallback(() => {
+    setIncomeDraft(createEmptyRecurringIncomeDraft());
+    setIncomeDraftError("");
+  }, []);
+
+  const resetPlannedCashflowDraft = useCallback(() => {
+    setPlannedCashflowDraft(createEmptyPlannedCashflowDraft());
+    setPlannedCashflowDraftError("");
+  }, []);
+
+  const saveIncomeDraft = useCallback(async () => {
+    const name = incomeDraft.name.trim();
+    const amount = Math.abs(Number(incomeDraft.amount) || 0);
+    if (!name || amount <= 0 || !incomeDraft.nextDate) {
+      setIncomeDraftError("Add a name, positive amount, and next payday date.");
+      return;
+    }
+    const payload: Omit<RecurringIncome, "id" | "createdAt"> = {
+      name,
+      amount,
+      cycle: incomeDraft.cycle,
+      nextDate: new Date(incomeDraft.nextDate).toISOString(),
+    };
+    setIncomeDraftError("");
+    if (incomeDraft.id) {
+      await updateRecurringIncome(incomeDraft.id, payload);
+    } else {
+      await addRecurringIncome(payload);
+    }
+    resetIncomeDraft();
+  }, [incomeDraft, addRecurringIncome, resetIncomeDraft, updateRecurringIncome]);
+
+  const savePlannedCashflowDraft = useCallback(async () => {
+    const title = plannedCashflowDraft.title.trim();
+    const amount = Math.abs(Number(plannedCashflowDraft.amount) || 0);
+    if (!title || amount <= 0 || !plannedCashflowDraft.date) {
+      setPlannedCashflowDraftError("Add a title, positive amount, and date.");
+      return;
+    }
+    const payload: Omit<PlannedCashflowItem, "id" | "createdAt"> = {
+      title,
+      amount,
+      kind: plannedCashflowDraft.kind,
+      date: new Date(plannedCashflowDraft.date).toISOString(),
+      category: plannedCashflowDraft.category.trim() || undefined,
+    };
+    setPlannedCashflowDraftError("");
+    if (plannedCashflowDraft.id) {
+      await updatePlannedCashflow(plannedCashflowDraft.id, payload);
+    } else {
+      await addPlannedCashflow(payload);
+    }
+    resetPlannedCashflowDraft();
+  }, [plannedCashflowDraft, addPlannedCashflow, resetPlannedCashflowDraft, updatePlannedCashflow]);
+
+  const dismissSubscriptionSuggestion = useCallback((signature: string) => {
+    setDismissedSubscriptionSuggestions((prev) => (
+      prev.includes(signature) ? prev : [signature, ...prev].slice(0, 200)
+    ));
+  }, []);
+
+  const addDetectedSubscription = useCallback(async (candidate: {
+    signature: string;
+    name: string;
+    amount: number;
+    cycle: SubscriptionCycle;
+    nextBillingDate: string;
+  }) => {
+    await addSubscription({
+      name: candidate.name,
+      amount: candidate.amount,
+      cycle: candidate.cycle,
+      nextBillingDate: new Date(candidate.nextBillingDate).toISOString(),
+    });
+    dismissSubscriptionSuggestion(candidate.signature);
+  }, [addSubscription, dismissSubscriptionSuggestion]);
 
   useEffect(() => {
     if (!("Notification" in window)) {
@@ -2554,6 +2820,109 @@ function App() {
             </section>
 
             <div className="home-section-head">
+              <h3>Cashflow outlook</h3>
+              <p className="muted">Next 30 days</p>
+            </div>
+            <section className="card cashflow-outlook-card">
+              {cashflowForecast ? (
+                <>
+                  <div className="cashflow-outlook-head">
+                    <div>
+                      <p className="cashflow-kicker">Forecast 2.0</p>
+                      <p className="muted">
+                        Baseline pace about {money(cashflowForecast.baselineDailySpend)}/day outside scheduled bills and planned cash hits.
+                      </p>
+                    </div>
+                    <span className={`cashflow-status-pill ${cashflowForecast.riskDays.length > 0 ? "is-risk" : "is-safe"}`}>
+                      {cashflowForecast.riskDays.length > 0 ? "Risk ahead" : "Stable"}
+                    </span>
+                  </div>
+
+                  <div className="snapshot-grid cashflow-summary-grid">
+                    <article>
+                      <p className="muted">Lowest point</p>
+                      <strong className={cashflowForecast.lowestPoint && cashflowForecast.lowestPoint.balance < 0 ? "negative" : ""}>
+                        {money(cashflowForecast.lowestPoint?.balance ?? realBalance)}
+                      </strong>
+                      <p className="muted">
+                        {cashflowForecast.lowestPoint ? format(parseISO(cashflowForecast.lowestPoint.date), "EEE, MMM d") : "No projection yet"}
+                      </p>
+                    </article>
+                    <article>
+                      <p className="muted">Next payday</p>
+                      <strong className="positive">
+                        {cashflowForecast.nextPayday ? money(cashflowForecast.nextPayday.amount) : "None"}
+                      </strong>
+                      <p className="muted">
+                        {cashflowForecast.nextPayday ? `${cashflowForecast.nextPayday.label} · ${format(parseISO(cashflowForecast.nextPayday.date), "MMM d")}` : "Add recurring income in Settings"}
+                      </p>
+                    </article>
+                    <article>
+                      <p className="muted">Risk threshold</p>
+                      <strong>{money(cashflowForecast.threshold)}</strong>
+                      <p className="muted">
+                        {cashflowForecast.nextRiskDay
+                          ? `First risk: ${format(parseISO(cashflowForecast.nextRiskDay.date), "MMM d")}`
+                          : "No days below floor"}
+                      </p>
+                    </article>
+                  </div>
+
+                  <div className="cashflow-mini-days" aria-label="Projected balance by day">
+                    {cashflowForecast.points.slice(0, 8).map((point) => (
+                      <article key={point.date} className={`cashflow-mini-day ${point.belowThreshold ? "is-risk" : ""}`}>
+                        <span className="cashflow-mini-day-label">{format(parseISO(point.date), "EEE")}</span>
+                        <strong className={point.balance < 0 ? "negative" : ""}>{money(point.balance)}</strong>
+                      </article>
+                    ))}
+                  </div>
+
+                  {forecastRiskPreview.length > 0 ? (
+                    <div className="cashflow-risk-list">
+                      <p className="cashflow-subtitle">Risk days</p>
+                      {forecastRiskPreview.map((point) => (
+                        <div key={point.date} className="cashflow-risk-item">
+                          <div>
+                            <strong>{format(parseISO(point.date), "EEEE, MMM d")}</strong>
+                            <p className="muted">
+                              {point.events.length > 0
+                                ? point.events
+                                  .filter((event) => event.kind !== "baseline_spend")
+                                  .slice(0, 2)
+                                  .map((event) => event.label)
+                                  .join(" · ") || "Daily spending pace"
+                                : "Daily spending pace"}
+                            </p>
+                          </div>
+                          <strong className="negative">{money(point.balance)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted cashflow-no-risk">No projected days below your threshold in the next 30 days.</p>
+                  )}
+
+                  {forecastEventPreview.length > 0 ? (
+                    <div className="cashflow-event-list">
+                      <p className="cashflow-subtitle">Upcoming scheduled hits</p>
+                      {forecastEventPreview.map((event, idx) => (
+                        <div key={`${event.date}-${event.label}-${idx}`} className="cashflow-event-item">
+                          <div>
+                            <strong>{event.label}</strong>
+                            <p className="muted">{format(parseISO(event.date), "EEE, MMM d")}</p>
+                          </div>
+                          <strong className={event.amount >= 0 ? "positive" : "negative"}>{money(event.amount)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="muted">Set your balance first, then add paydays or planned cash items in Settings to build the projection.</p>
+              )}
+            </section>
+
+            <div className="home-section-head">
               <h3>Recent activity</h3>
               <p className="muted">Swipe to edit or delete</p>
             </div>
@@ -2631,7 +3000,37 @@ function App() {
         {tab === "Subscriptions" && (
           <section className="card">
             <div className="row"><h3>Subscriptions</h3><button onClick={() => setShowSub(true)}>Add</button></div>
-            {upcoming.map((s) => (
+            {subscriptionSuggestions.length > 0 && (
+              <div className="subscription-suggestions">
+                <div className="subscription-suggestions-head">
+                  <strong>Suggestions from transactions</strong>
+                  <span className="muted">Auto-detected recurring charges</span>
+                </div>
+                {subscriptionSuggestions.slice(0, 4).map((candidate) => (
+                  <article key={candidate.signature} className="subscription-suggestion-card">
+                    <div className="subscription-suggestion-copy">
+                      <p className="subscription-suggestion-kicker">
+                        Looks like a {candidate.cycle} subscription
+                      </p>
+                      <strong>{candidate.name}</strong>
+                      <p className="muted">
+                        {money(candidate.amount)} · confidence {candidate.confidence}% · seen {candidate.matchCount} time{candidate.matchCount === 1 ? "" : "s"}
+                      </p>
+                      <p className="muted">{candidate.hint}</p>
+                    </div>
+                    <div className="inline-actions">
+                      <button type="button" onClick={() => { void addDetectedSubscription(candidate); }}>
+                        Add
+                      </button>
+                      <button type="button" className="ghost-btn" onClick={() => dismissSubscriptionSuggestion(candidate.signature)}>
+                        Dismiss
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            {upcoming.length > 0 ? upcoming.map((s) => (
               <SubscriptionRow
                 key={s.id}
                 row={s}
@@ -2641,7 +3040,13 @@ function App() {
                 }}
                 onMarkPaid={() => setMarkPaidTarget(subscriptions.find((x) => x.id === s.id) ?? s)}
               />
-            ))}
+            )) : (
+              <p className="muted">
+                {subscriptionSuggestions.length > 0
+                  ? "No saved subscriptions yet. Start by accepting one of the suggestions above or add one manually."
+                  : "No subscriptions yet. Add one manually, or log a repeating charge a couple of times and I’ll suggest it here."}
+              </p>
+            )}
           </section>
         )}
 
@@ -2986,6 +3391,7 @@ function App() {
                 <label>Monthly salary<input type="number" value={settings.monthlySalary ?? 0} onChange={(e) => updateSettings({ monthlySalary: Number(e.target.value) })} /></label>
                 <label>Current balance<input type="number" value={settings.currentBalance} onChange={(e) => updateSettings({ currentBalance: Number(e.target.value) })} /></label>
                 <label>Monthly savings reserve<input type="number" value={settings.reservedSavings} onChange={(e) => updateSettings({ reservedSavings: Number(e.target.value) })} /></label>
+                <label>Risk threshold<input type="number" value={settings.forecastRiskThreshold ?? settings.reservedSavings ?? 0} onChange={(e) => updateSettings({ forecastRiskThreshold: Number(e.target.value) })} /></label>
               </div>
               <div className="settings-formula">
                 <p className="muted">Weekly safe (from current balance): {money(weeklySafeToUse)}</p>
@@ -2994,6 +3400,121 @@ function App() {
                 </p>
                 <p className="muted">Income this month: {money(budgetSnapshot.monthIncomeToDate)} of {money(monthlySalary)} planned.</p>
                 <p className="muted">Week starts Saturday. {budgetSnapshot.daysLeftInWeek} day(s) left this week, {budgetSnapshot.daysLeftInMonth} day(s) left this month.</p>
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <p className="settings-kicker">Forecast setup</p>
+              <h3>Recurring income</h3>
+              <p className="muted">Add the next payday for each income stream so the projection can place cash on the right days.</p>
+              <div className="cashflow-inline-form">
+                <label>Name<input value={incomeDraft.name} onChange={(e) => setIncomeDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Salary" /></label>
+                <label>Amount<input type="number" value={incomeDraft.amount} onChange={(e) => setIncomeDraft((prev) => ({ ...prev, amount: e.target.value }))} placeholder="0" /></label>
+                <label>Cycle<select value={incomeDraft.cycle} onChange={(e) => setIncomeDraft((prev) => ({ ...prev, cycle: e.target.value as RecurringIncomeCycle }))}><option value="weekly">Weekly</option><option value="biweekly">Biweekly</option><option value="monthly">Monthly</option></select></label>
+                <label>Next payday<input type="date" value={incomeDraft.nextDate} onChange={(e) => setIncomeDraft((prev) => ({ ...prev, nextDate: e.target.value }))} /></label>
+              </div>
+              {incomeDraftError ? <p className="error-text">{incomeDraftError}</p> : null}
+              <div className="settings-actions">
+                <button type="button" onClick={() => { void saveIncomeDraft(); }}>{incomeDraft.id ? "Update income" : "Add income"}</button>
+                {incomeDraft.id ? <button type="button" className="ghost-btn" onClick={resetIncomeDraft}>Cancel edit</button> : null}
+              </div>
+              <div className="cashflow-settings-list">
+                {recurringIncome.length === 0 ? (
+                  <p className="muted">No recurring income yet. Add your next paycheck or other repeating income above.</p>
+                ) : (
+                  recurringIncome.map((row) => (
+                    <div key={row.id} className="cashflow-settings-item">
+                      <div>
+                        <strong>{row.name}</strong>
+                        <p className="muted">{money(row.amount)} · {row.cycle} · {format(parseISO(row.nextDate), "MMM d, yyyy")}</p>
+                      </div>
+                      <div className="inline-actions">
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => {
+                            setIncomeDraft({
+                              id: row.id ?? null,
+                              name: row.name,
+                              amount: String(row.amount),
+                              cycle: row.cycle,
+                              nextDate: format(parseISO(row.nextDate), "yyyy-MM-dd"),
+                            });
+                            setIncomeDraftError("");
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button type="button" className="ghost-btn" onClick={() => { if (row.id) void deleteRecurringIncome(row.id); }}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <p className="settings-kicker">Forecast setup</p>
+              <h3>Planned cash events</h3>
+              <p className="muted">Use this for known future hits like rent, travel, or a manual transfer into savings.</p>
+              <div className="cashflow-inline-form">
+                <label>Title<input value={plannedCashflowDraft.title} onChange={(e) => setPlannedCashflowDraft((prev) => ({ ...prev, title: e.target.value }))} placeholder="Rent" /></label>
+                <label>Amount<input type="number" value={plannedCashflowDraft.amount} onChange={(e) => setPlannedCashflowDraft((prev) => ({ ...prev, amount: e.target.value }))} placeholder="0" /></label>
+                <label>Kind<select value={plannedCashflowDraft.kind} onChange={(e) => setPlannedCashflowDraft((prev) => ({ ...prev, kind: e.target.value as PlannedCashflowKind }))}><option value="planned_expense">Planned expense</option><option value="savings_transfer">Savings transfer</option></select></label>
+                <label>Date<input type="date" value={plannedCashflowDraft.date} onChange={(e) => setPlannedCashflowDraft((prev) => ({ ...prev, date: e.target.value }))} /></label>
+                <label>Category<input value={plannedCashflowDraft.category} onChange={(e) => setPlannedCashflowDraft((prev) => ({ ...prev, category: e.target.value }))} placeholder="Housing, Savings, Travel" /></label>
+              </div>
+              {plannedCashflowDraftError ? <p className="error-text">{plannedCashflowDraftError}</p> : null}
+              <div className="settings-actions">
+                <button type="button" onClick={() => { void savePlannedCashflowDraft(); }}>
+                  {plannedCashflowDraft.id ? "Update event" : "Add event"}
+                </button>
+                {plannedCashflowDraft.id ? <button type="button" className="ghost-btn" onClick={resetPlannedCashflowDraft}>Cancel edit</button> : null}
+              </div>
+              <div className="cashflow-settings-list">
+                {plannedCashflows.length === 0 ? (
+                  <p className="muted">No planned cash events yet. Add the future expenses or transfers you already know about.</p>
+                ) : (
+                  plannedCashflows.map((row) => (
+                    <div key={row.id} className="cashflow-settings-item">
+                      <div>
+                        <strong>{row.title}</strong>
+                        <p className="muted">
+                          {row.kind === "savings_transfer" ? "Savings transfer" : "Planned expense"}
+                          {" · "}
+                          {money(row.amount)}
+                          {" · "}
+                          {format(parseISO(row.date), "MMM d, yyyy")}
+                          {row.category ? ` · ${row.category}` : ""}
+                        </p>
+                      </div>
+                      <div className="inline-actions">
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => {
+                            setPlannedCashflowDraft({
+                              id: row.id ?? null,
+                              title: row.title,
+                              amount: String(row.amount),
+                              kind: row.kind,
+                              date: format(parseISO(row.date), "yyyy-MM-dd"),
+                              category: row.category ?? "",
+                            });
+                            setPlannedCashflowDraftError("");
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button type="button" className="ghost-btn" onClick={() => { if (row.id) void deletePlannedCashflow(row.id); }}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </section>
 
@@ -3209,7 +3730,7 @@ function App() {
             <section className="card settings-card settings-danger">
               <p className="settings-kicker">Danger zone</p>
               <h3>Reset local data</h3>
-              <p className="muted">This removes transactions, subscriptions, settings, and rules from this device.</p>
+              <p className="muted">This removes transactions, subscriptions, forecast items, settings, and rules from this device.</p>
               <button
                 className="danger-btn"
                 type="button"
@@ -3217,6 +3738,8 @@ function App() {
                   const ok = window.confirm("Clear all local app data? This cannot be undone.");
                   if (!ok) return;
                   await clearData();
+                  setDismissedSubscriptionSuggestions([]);
+                  localStorage.removeItem("zero_subscription_detection_dismissed_v1");
                 }}
               >
                 Clear all data

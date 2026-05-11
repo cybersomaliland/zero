@@ -2,7 +2,13 @@ import { create } from "zustand";
 import { db, seedIfEmpty } from "./db";
 import { inferCategory } from "./logic";
 import { dedupeNormalizedTransactions, normalizeTransactionInput } from "./quality";
-import type { Settings, Subscription, Transaction } from "./types";
+import type {
+  PlannedCashflowItem,
+  RecurringIncome,
+  Settings,
+  Subscription,
+  Transaction,
+} from "./types";
 
 const signedTxAmount = (tx: Pick<Transaction, "type" | "amount">) => (tx.type === "income" ? 1 : -1) * Math.abs(Number(tx.amount) || 0);
 
@@ -10,6 +16,8 @@ type State = {
   loading: boolean;
   transactions: Transaction[];
   subscriptions: Subscription[];
+  recurringIncome: RecurringIncome[];
+  plannedCashflows: PlannedCashflowItem[];
   settings: Settings | null;
   rules: { keyword: string; category: string }[];
   init: () => Promise<void>;
@@ -18,6 +26,12 @@ type State = {
   deleteTransaction: (id: number) => Promise<void>;
   addSubscription: (s: Omit<Subscription, "id" | "createdAt">) => Promise<void>;
   updateSubscription: (id: number, s: Partial<Subscription>) => Promise<void>;
+  addRecurringIncome: (row: Omit<RecurringIncome, "id" | "createdAt">) => Promise<void>;
+  updateRecurringIncome: (id: number, row: Partial<RecurringIncome>) => Promise<void>;
+  deleteRecurringIncome: (id: number) => Promise<void>;
+  addPlannedCashflow: (row: Omit<PlannedCashflowItem, "id" | "createdAt">) => Promise<void>;
+  updatePlannedCashflow: (id: number, row: Partial<PlannedCashflowItem>) => Promise<void>;
+  deletePlannedCashflow: (id: number) => Promise<void>;
   addTransactionsBulk: (rows: Array<Omit<Transaction, "id" | "createdAt" | "category"> & { category?: string }>) => Promise<void>;
   updateSettings: (s: Partial<Settings>) => Promise<void>;
   learnRule: (keyword: string, category: string) => Promise<void>;
@@ -29,17 +43,31 @@ export const useZeroStore = create<State>((set, get) => ({
   loading: true,
   transactions: [],
   subscriptions: [],
+  recurringIncome: [],
+  plannedCashflows: [],
   settings: null,
   rules: [],
   init: async () => {
     await seedIfEmpty();
-    const [transactions, subscriptions, settings, rules] = await Promise.all([
+    const [transactions, subscriptions, recurringIncome, plannedCashflows, settings, rules] = await Promise.all([
       db.transactions.reverse().sortBy("date"),
       db.subscriptions.toArray(),
+      db.recurringIncome.toArray(),
+      db.plannedCashflows.toArray(),
       db.settings.get(1),
       db.categoryRules.toArray(),
     ]);
-    set({ transactions, subscriptions, settings: settings ?? null, rules, loading: false });
+    recurringIncome.sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+    plannedCashflows.sort((a, b) => a.date.localeCompare(b.date));
+    set({
+      transactions,
+      subscriptions,
+      recurringIncome,
+      plannedCashflows,
+      settings: settings ?? null,
+      rules,
+      loading: false,
+    });
   },
   addTransaction: async (t) => {
     const clean = normalizeTransactionInput(t);
@@ -94,6 +122,30 @@ export const useZeroStore = create<State>((set, get) => ({
     await db.subscriptions.update(id, s);
     await get().init();
   },
+  addRecurringIncome: async (row) => {
+    await db.recurringIncome.add({ ...row, createdAt: new Date().toISOString() });
+    await get().init();
+  },
+  updateRecurringIncome: async (id, row) => {
+    await db.recurringIncome.update(id, row);
+    await get().init();
+  },
+  deleteRecurringIncome: async (id) => {
+    await db.recurringIncome.delete(id);
+    await get().init();
+  },
+  addPlannedCashflow: async (row) => {
+    await db.plannedCashflows.add({ ...row, createdAt: new Date().toISOString() });
+    await get().init();
+  },
+  updatePlannedCashflow: async (id, row) => {
+    await db.plannedCashflows.update(id, row);
+    await get().init();
+  },
+  deletePlannedCashflow: async (id) => {
+    await db.plannedCashflows.delete(id);
+    await get().init();
+  },
   addTransactionsBulk: async (rows) => {
     const { rules } = get();
     const normalizedRows = rows.map((t) => normalizeTransactionInput(t));
@@ -145,6 +197,8 @@ export const useZeroStore = create<State>((set, get) => ({
     await Promise.all([
       db.transactions.clear(),
       db.subscriptions.clear(),
+      db.recurringIncome.clear(),
+      db.plannedCashflows.clear(),
       db.settings.clear(),
       db.categoryRules.clear(),
     ]);
