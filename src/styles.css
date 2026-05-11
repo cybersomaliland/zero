@@ -3148,11 +3148,57 @@ input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; paddin
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+.cashflow-mini-range {
+  font-size: 11px;
+  line-height: 1.3;
+}
 .cashflow-subtitle {
   margin: 0 0 6px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+.cashflow-correction-callout {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 69, 58, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 69, 58, 0.12);
+}
+.cashflow-checkpoint-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.cashflow-checkpoint-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 16px;
+  background: #f5f7fa;
+}
+.cashflow-scenario-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cashflow-trend-list {
+  display: grid;
+  gap: 8px;
+}
+.cashflow-trend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #f5f7fa;
+}
+.cashflow-trend-item > div:first-child {
+  min-width: 0;
 }
 .cashflow-risk-list,
 .cashflow-event-list {
@@ -3217,9 +3263,13 @@ input, select, textarea { border: 1px solid #e3e5eb; border-radius: 12px; paddin
   .cashflow-settings-item,
   .cashflow-risk-item,
   .cashflow-event-item,
+  .cashflow-trend-item,
   .cashflow-outlook-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .cashflow-checkpoint-grid {
+    grid-template-columns: 1fr;
   }
   .cashflow-mini-days {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3335,9 +3385,21 @@ html[data-theme="dark"] .timeline-memory,
 html[data-theme="dark"] .routine-reminder-form,
 html[data-theme="dark"] .daily-tip,
 html[data-theme="dark"] .briefing-summary,
-html[data-theme="dark"] .regional-brief-panel {
+html[data-theme="dark"] .regional-brief-panel,
+html[data-theme="dark"] .cashflow-checkpoint-card,
+html[data-theme="dark"] .cashflow-trend-item,
+html[data-theme="dark"] .cashflow-risk-item,
+html[data-theme="dark"] .cashflow-event-item,
+html[data-theme="dark"] .cashflow-mini-day {
   background: var(--bg-tertiary) !important;
   box-shadow: inset 0 0 0 1px var(--border) !important;
+}
+html[data-theme="dark"] .cashflow-correction-callout {
+  background: rgba(255, 69, 58, 0.12) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 69, 58, 0.18) !important;
+}
+html[data-theme="dark"] .cashflow-no-risk {
+  background: rgba(52, 199, 89, 0.12) !important;
 }
 html[data-theme="dark"] .weather-hero-condition {
   color: var(--text-primary) !important;

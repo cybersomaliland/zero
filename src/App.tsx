@@ -1959,6 +1959,8 @@ function App() {
         cashflowForecastSummary: {
           threshold: cashflowForecast?.threshold ?? 0,
           baselineDailySpend: cashflowForecast?.baselineDailySpend ?? 0,
+          salaryContext: cashflowForecast?.salaryContext,
+          spendingProfile: cashflowForecast?.spendingProfile,
           lowestPoint: cashflowForecast?.lowestPoint
             ? { date: cashflowForecast.lowestPoint.date, balance: cashflowForecast.lowestPoint.balance }
             : null,
@@ -1981,6 +1983,46 @@ function App() {
             label: event.label,
             amount: event.amount,
             kind: event.kind,
+          })),
+          checkpoints: cashflowForecast?.checkpoints
+            ? {
+              nextPayday: cashflowForecast.checkpoints.nextPayday
+                ? {
+                  date: cashflowForecast.checkpoints.nextPayday.date,
+                  bestBalance: cashflowForecast.checkpoints.nextPayday.bestBalance,
+                  likelyBalance: cashflowForecast.checkpoints.nextPayday.likelyBalance,
+                  worstBalance: cashflowForecast.checkpoints.nextPayday.worstBalance,
+                }
+                : null,
+              monthEnd: cashflowForecast.checkpoints.monthEnd
+                ? {
+                  date: cashflowForecast.checkpoints.monthEnd.date,
+                  bestBalance: cashflowForecast.checkpoints.monthEnd.bestBalance,
+                  likelyBalance: cashflowForecast.checkpoints.monthEnd.likelyBalance,
+                  worstBalance: cashflowForecast.checkpoints.monthEnd.worstBalance,
+                }
+                : null,
+            }
+            : undefined,
+          categoryTrends: (cashflowForecast?.categoryTrends ?? []).slice(0, 6).map((trend) => ({
+            category: trend.category,
+            changePct: trend.changePct,
+            direction: trend.direction,
+            spendClass: trend.spendClass,
+          })),
+          requiredCorrection: cashflowForecast?.requiredCorrection
+            ? {
+              amountPerDay: cashflowForecast.requiredCorrection.amountPerDay,
+              days: cashflowForecast.requiredCorrection.days,
+              targetDate: cashflowForecast.requiredCorrection.targetDate,
+              targetLabel: cashflowForecast.requiredCorrection.targetLabel,
+            }
+            : null,
+          irregularExpenses: (cashflowForecast?.irregularExpenses ?? []).slice(0, 5).map((expense) => ({
+            date: expense.date,
+            label: expense.label,
+            amount: expense.amount,
+            category: expense.category,
           })),
         },
         financeSnapshot: {
@@ -2830,17 +2872,18 @@ function App() {
                     <div>
                       <p className="cashflow-kicker">Forecast 2.0</p>
                       <p className="muted">
-                        Baseline pace about {money(cashflowForecast.baselineDailySpend)}/day outside scheduled bills and planned cash hits.
+                        Salary basis: {money(cashflowForecast.salaryContext.monthlySalary)} salary - {money(cashflowForecast.salaryContext.recurringSubscriptionsMonthly)} recurring subs
+                        {" "}= {money(cashflowForecast.salaryContext.salaryAfterSubscriptions)}/month before transaction pace.
                       </p>
                     </div>
-                    <span className={`cashflow-status-pill ${cashflowForecast.riskDays.length > 0 ? "is-risk" : "is-safe"}`}>
-                      {cashflowForecast.riskDays.length > 0 ? "Risk ahead" : "Stable"}
+                    <span className={`cashflow-status-pill ${cashflowForecast.requiredCorrection ? "is-risk" : "is-safe"}`}>
+                      {cashflowForecast.requiredCorrection ? "Needs correction" : "Stable"}
                     </span>
                   </div>
 
                   <div className="snapshot-grid cashflow-summary-grid">
                     <article>
-                      <p className="muted">Lowest point</p>
+                      <p className="muted">Lowest likely point</p>
                       <strong className={cashflowForecast.lowestPoint && cashflowForecast.lowestPoint.balance < 0 ? "negative" : ""}>
                         {money(cashflowForecast.lowestPoint?.balance ?? realBalance)}
                       </strong>
@@ -2850,36 +2893,117 @@ function App() {
                     </article>
                     <article>
                       <p className="muted">Next payday</p>
-                      <strong className="positive">
-                        {cashflowForecast.nextPayday ? money(cashflowForecast.nextPayday.amount) : "None"}
+                      <strong className={cashflowForecast.checkpoints.nextPayday && cashflowForecast.checkpoints.nextPayday.likelyBalance < 0 ? "negative" : "positive"}>
+                        {cashflowForecast.checkpoints.nextPayday ? money(cashflowForecast.checkpoints.nextPayday.likelyBalance) : "None"}
                       </strong>
                       <p className="muted">
-                        {cashflowForecast.nextPayday ? `${cashflowForecast.nextPayday.label} · ${format(parseISO(cashflowForecast.nextPayday.date), "MMM d")}` : "Add recurring income in Settings"}
+                        {cashflowForecast.nextPayday ? `${cashflowForecast.nextPayday.label} · ${format(parseISO(cashflowForecast.nextPayday.date), "MMM d")}` : "Using salary fallback or add recurring income in Settings"}
                       </p>
+                    </article>
+                    <article>
+                      <p className="muted">At current tx pace</p>
+                      <strong className={cashflowForecast.checkpoints.monthEnd && cashflowForecast.checkpoints.monthEnd.likelyBalance < 0 ? "negative" : ""}>
+                        {money(cashflowForecast.salaryContext.monthlyNetAfterTransactions)}
+                      </strong>
+                      <p className="muted">
+                        {money(cashflowForecast.salaryContext.monthlyObservedSpend)} actual transaction pace / month after fixed costs.
+                      </p>
+                    </article>
+                  </div>
+
+                  <div className="snapshot-grid cashflow-summary-grid">
+                    <article>
+                      <p className="muted">Essential pace</p>
+                      <strong>{money(cashflowForecast.salaryContext.monthlyEssentialSpend)}</strong>
+                      <p className="muted">Observed from recurring/essential transaction categories.</p>
+                    </article>
+                    <article>
+                      <p className="muted">Flexible pace</p>
+                      <strong>{money(cashflowForecast.salaryContext.monthlyFlexibleSpend)}</strong>
+                      <p className="muted">Observed from food, shopping, eating out, and other adjustable spend.</p>
                     </article>
                     <article>
                       <p className="muted">Risk threshold</p>
                       <strong>{money(cashflowForecast.threshold)}</strong>
                       <p className="muted">
                         {cashflowForecast.nextRiskDay
-                          ? `First risk: ${format(parseISO(cashflowForecast.nextRiskDay.date), "MMM d")}`
-                          : "No days below floor"}
+                          ? `First likely risk ${format(parseISO(cashflowForecast.nextRiskDay.date), "MMM d")}`
+                          : "No likely day below floor right now"}
                       </p>
                     </article>
                   </div>
+
+                  {cashflowForecast.requiredCorrection ? (
+                    <div className="cashflow-correction-callout" role="status">
+                      <strong>Required correction</strong>
+                      <p className="muted">
+                        To stay above your buffer, reduce flexible spending by{" "}
+                        <strong>{money(cashflowForecast.requiredCorrection.amountPerDay)}/day</strong> for the next{" "}
+                        <strong>{cashflowForecast.requiredCorrection.days}</strong> day(s), through{" "}
+                        <strong>{format(parseISO(cashflowForecast.requiredCorrection.targetDate), "MMM d")}</strong>.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="muted cashflow-no-risk">Likely path stays above your {money(cashflowForecast.threshold)} buffer right now.</p>
+                  )}
 
                   <div className="cashflow-mini-days" aria-label="Projected balance by day">
                     {cashflowForecast.points.slice(0, 8).map((point) => (
                       <article key={point.date} className={`cashflow-mini-day ${point.belowThreshold ? "is-risk" : ""}`}>
                         <span className="cashflow-mini-day-label">{format(parseISO(point.date), "EEE")}</span>
                         <strong className={point.balance < 0 ? "negative" : ""}>{money(point.balance)}</strong>
+                        <span className="muted cashflow-mini-range">
+                          {money(point.bestBalance)} to {money(point.worstBalance)}
+                        </span>
                       </article>
                     ))}
                   </div>
 
+                  <div className="cashflow-checkpoint-grid">
+                    {[cashflowForecast.checkpoints.nextPayday, cashflowForecast.checkpoints.monthEnd].filter(Boolean).map((checkpoint) => (
+                      <article key={checkpoint!.label} className="cashflow-checkpoint-card">
+                        <p className="cashflow-subtitle">{checkpoint!.label}</p>
+                        <p className="muted">{format(parseISO(checkpoint!.date), "EEEE, MMM d")}</p>
+                        <div className="cashflow-scenario-row">
+                          <span>Best</span>
+                          <strong className="positive">{money(checkpoint!.bestBalance)}</strong>
+                        </div>
+                        <div className="cashflow-scenario-row">
+                          <span>Likely</span>
+                          <strong className={checkpoint!.likelyBalance < 0 ? "negative" : ""}>{money(checkpoint!.likelyBalance)}</strong>
+                        </div>
+                        <div className="cashflow-scenario-row">
+                          <span>Worst</span>
+                          <strong className={checkpoint!.worstBalance < 0 ? "negative" : ""}>{money(checkpoint!.worstBalance)}</strong>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  {cashflowForecast.categoryTrends.length > 0 ? (
+                    <div className="cashflow-trend-list">
+                      <p className="cashflow-subtitle">Category trends</p>
+                      {cashflowForecast.categoryTrends.slice(0, 4).map((trend) => (
+                        <div key={trend.category} className="cashflow-trend-item">
+                          <div>
+                            <strong>{trend.category}</strong>
+                            <p className="muted">
+                              {trend.spendClass === "essential" ? "Essential" : "Flexible"} · last 30 days {money(trend.recent30Total)}
+                            </p>
+                          </div>
+                          <strong className={trend.direction === "rising" ? "negative" : trend.direction === "falling" ? "positive" : ""}>
+                            {trend.direction === "rising" ? "Rising" : trend.direction === "falling" ? "Falling" : "Stable"}
+                            {" "}
+                            ({trend.changePct > 0 ? "+" : ""}{trend.changePct.toFixed(0)}%)
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
                   {forecastRiskPreview.length > 0 ? (
                     <div className="cashflow-risk-list">
-                      <p className="cashflow-subtitle">Risk days</p>
+                      <p className="cashflow-subtitle">Likely risk days</p>
                       {forecastRiskPreview.map((point) => (
                         <div key={point.date} className="cashflow-risk-item">
                           <div>
@@ -2898,9 +3022,7 @@ function App() {
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="muted cashflow-no-risk">No projected days below your threshold in the next 30 days.</p>
-                  )}
+                  ) : null}
 
                   {forecastEventPreview.length > 0 ? (
                     <div className="cashflow-event-list">
@@ -2912,6 +3034,21 @@ function App() {
                             <p className="muted">{format(parseISO(event.date), "EEE, MMM d")}</p>
                           </div>
                           <strong className={event.amount >= 0 ? "positive" : "negative"}>{money(event.amount)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {cashflowForecast.irregularExpenses.length > 0 ? (
+                    <div className="cashflow-event-list">
+                      <p className="cashflow-subtitle">Irregular big expenses</p>
+                      {cashflowForecast.irregularExpenses.map((expense, idx) => (
+                        <div key={`${expense.date}-${expense.label}-${idx}`} className="cashflow-event-item">
+                          <div>
+                            <strong>{expense.label}</strong>
+                            <p className="muted">{expense.category} · {format(parseISO(expense.date), "EEE, MMM d")}</p>
+                          </div>
+                          <strong className="negative">{money(expense.amount)}</strong>
                         </div>
                       ))}
                     </div>

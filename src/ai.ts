@@ -23,11 +23,33 @@ export async function askGroqFinanceAssistant(params: {
   cashflowForecastSummary: {
     threshold: number;
     baselineDailySpend: number;
+    salaryContext?: {
+      monthlySalary: number;
+      recurringSubscriptionsMonthly: number;
+      salaryAfterSubscriptions: number;
+      monthlyEssentialSpend: number;
+      monthlyFlexibleSpend: number;
+      monthlyObservedSpend: number;
+      monthlyNetAfterTransactions: number;
+    };
+    spendingProfile?: {
+      weekdayEssential: number;
+      weekdayFlexible: number;
+      weekendEssential: number;
+      weekendFlexible: number;
+    };
     lowestPoint: { date: string; balance: number } | null;
     nextRiskDay: { date: string; balance: number } | null;
     nextPayday: { date: string; label: string; amount: number } | null;
     riskDays: Array<{ date: string; balance: number }>;
     upcomingEvents: Array<{ date: string; label: string; amount: number; kind: string }>;
+    checkpoints?: {
+      nextPayday: { date: string; bestBalance: number; likelyBalance: number; worstBalance: number } | null;
+      monthEnd: { date: string; bestBalance: number; likelyBalance: number; worstBalance: number } | null;
+    };
+    categoryTrends?: Array<{ category: string; changePct: number; direction: string; spendClass: string }>;
+    requiredCorrection?: { amountPerDay: number; days: number; targetDate: string; targetLabel: string } | null;
+    irregularExpenses?: Array<{ date: string; label: string; amount: number; category: string }>;
   };
   financeSnapshot: {
     monthlySalary: number;
