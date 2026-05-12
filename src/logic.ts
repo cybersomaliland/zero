@@ -877,35 +877,40 @@ export function askFinanceAssistant(
   });
 
   if ((looksLikeAffordabilityQuestion(question) || q.includes("meal")) && askedAmount === null) {
-    return `Yeah, let's figure it out — drop the price and I'll check it against today's safe-to-spend. Example: "Can I afford an $18 meal today?"`;
+    return `I can judge it, but I need the price first. Try: "Can I afford an $18 meal today?"`;
   }
   if (looksLikeAffordabilityQuestion(question) || q.includes("meal")) {
     const amount = askedAmount ?? 0;
     if (!affordability) {
-      return `I need the price first. Example: "Can I afford a $25 meal today?"`;
+      return `I need the price first. Try: "Can I afford a $25 meal today?"`;
     }
     const opener = affordability.shortTermVerdict === "yes"
-      ? `Yes, ${money(amount)} fits today.`
+      ? `Yes, ${money(amount)} is okay today.`
       : affordability.shortTermVerdict === "tight"
-        ? `You can buy it, but it's tight.`
-        : `Not safely today.`;
+        ? `Yes, but it's tight.`
+        : `Not now.`;
     const weekLine = affordability.weekEndBalance != null
-      ? `Week effect: about ${money(affordability.weekEndBalance)} left by week-end.`
-      : `Week effect: this trims the next 7 days by ${money(amount)}.`;
+      ? `By week-end you'd be around ${money(affordability.weekEndBalance)}.`
+      : `This trims the next 7 days by about ${money(amount)}.`;
     const monthLine = affordability.monthEndBalance != null
-      ? `Month-end effect: about ${money(affordability.monthEndBalance)} left if the rest of the plan stays the same.`
-      : `Month-end effect: roughly ${money(amount)} less room.`;
+      ? `Month-end would land near ${money(affordability.monthEndBalance)} if the rest holds steady.`
+      : `It leaves roughly ${money(amount)} less room this month.`;
     const goalLine = affordability.goal
       ? affordability.goal.delayed
-        ? `Goal effect: this likely pushes ${affordability.goal.title} back by about ${affordability.goal.delayDays ?? 0} day(s).`
-        : `Goal effect: it doesn't materially delay ${affordability.goal.title} right now.`
-      : `Goal effect: no active savings goal is set yet.`;
-    return `${opener} Safe-to-spend now is ${money(affordability.safeToday)}, and after this you'd have ${money(affordability.todayAfterPurchase)} left today. ${weekLine} ${monthLine} ${goalLine}`;
+        ? `It likely pushes ${affordability.goal.title} back by about ${affordability.goal.delayDays ?? 0} day(s).`
+        : `${affordability.goal.title} stays on pace.`
+      : `No active savings goal is set yet.`;
+    const nextMove = affordability.shortTermVerdict === "yes"
+      ? "If it isn't urgent, the safer move is still to keep the rest of today light."
+      : affordability.shortTermVerdict === "tight"
+        ? "If you do it, offset it by keeping one optional spend out of today."
+        : "Wait until after income lands or cut the amount down first.";
+    return `${opener} Safe-to-spend right now is ${money(affordability.safeToday)}, and after this you'd have ${money(affordability.todayAfterPurchase)} left today. ${weekLine} ${monthLine} ${goalLine} ${nextMove}`;
   }
   if (q.includes("wasting") || q.includes("waste")) {
     if (!top) return "I need more expense data before I can detect waste patterns.";
     const memoryHint = coachMemories[0] ? ` Coach memory: ${coachMemories[0].summary}` : "";
-    return `Your highest spend category is ${top[0]} at ${money(top[1])}. Start there by setting a softer weekly cap and checking recurring purchases.${memoryHint}`;
+    return `Your main leak is ${top[0]} at ${money(top[1])}.${memoryHint} Start there before trying to fix everything at once.`;
   }
   if (q.includes("food")) {
     return `You spent about ${money(foodSpend)} on food and drink based on your recorded transactions.`;
@@ -915,7 +920,7 @@ export function askFinanceAssistant(
   }
   if (q.includes("predict") || q.includes("forecast") || q.includes("next")) {
     if (!minPoint) return "Add more data and I can forecast your next balance trend.";
-    return `Your projected low point is around ${minPoint.date} at ${money(minPoint.balance)}. Consider trimming variable spend ahead of that date.`;
+    return `Your next pressure point looks like ${minPoint.date} at about ${money(minPoint.balance)}. Keep variable spend lighter before then.`;
   }
   if ((q.includes("note") || q.includes("remember") || q.includes("what happened today")) && latestAiVisibleNote) {
     const titlePart = latestAiVisibleNote.title.trim() ? `${latestAiVisibleNote.title.trim()}: ` : "";
@@ -924,7 +929,7 @@ export function askFinanceAssistant(
   }
   const memoryLine = coachMemories[0] ? ` I'm already tracking this pattern: ${coachMemories[0].summary}` : "";
   const noteLine = latestAiVisibleNote ? ` Latest note: ${latestAiVisibleNote.body.trim()}` : "";
-  return `I'm tuned in once you point me at something — try e.g. "Can I afford a $25 meal today?", "Where's my money leaking?", food totals, or your next tight balance week.${memoryLine}${noteLine} What do you want to unpack first?`;
+  return `Point me at the decision or pressure point you want judged — affordability, spending leaks, food totals, or your next tight week.${memoryLine}${noteLine}`;
 }
 
 export function simulateWhatIfScenario(
