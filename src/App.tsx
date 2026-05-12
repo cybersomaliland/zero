@@ -292,7 +292,6 @@ function App() {
     return true;
   });
   const [activeMoneyExplanation, setActiveMoneyExplanation] = useState<MoneyMetricExplanationId | null>(null);
-  const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [markPaidTarget, setMarkPaidTarget] = useState<Subscription | null>(null);
@@ -470,13 +469,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (newsItems.length <= 1) return;
-    const id = window.setInterval(() => {
-      setActiveHeadlineIndex((i) => (i + 1) % newsItems.length);
-    }, 4500);
-    return () => window.clearInterval(id);
-  }, [newsItems]);
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = new Date();
@@ -836,14 +828,14 @@ function App() {
       fetchSomalilandNews(controller.signal)
         .then((items) => {
           setNewsItems(items);
-          if (items.length === 0) setNewsError("No Somaliland headlines found right now.");
+          if (items.length === 0) setNewsError("No recent Somaliland posts found right now.");
         })
         .catch(() => {
           setNewsItems([]);
           setNewsError(
             import.meta.env.DEV
-              ? "Headlines need the API server. Run npm run start (port 3000) while vite dev runs."
-              : "Couldn't load headlines.",
+              ? "Somaliland X updates need the API server. Run npm run start (port 3000) while vite dev runs."
+              : "Couldn't load Somaliland updates.",
           );
         })
         .finally(() => setNewsLoading(false)),
@@ -1239,15 +1231,11 @@ function App() {
     }),
     [newsItems],
   );
-  const latestNews = sortedNews[0];
-  const latestNewsIsFresh = useMemo(() => {
-    if (!latestNews?.publishedAt) return false;
-    const t = +new Date(latestNews.publishedAt);
-    if (!Number.isFinite(t) || t <= 0) return false;
-    const ageMs = Date.now() - t;
-    return ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
-  }, [latestNews]);
-  const fallbackHeadline = newsItems[activeHeadlineIndex];
+  const recentNewsItems = useMemo(
+    () => sortedNews.slice(0, 6),
+    [sortedNews],
+  );
+  const leadNewsItem = recentNewsItems[0] ?? null;
   const coachSuggestions = useMemo(() => {
     const items: string[] = [];
     if (todayRemaining < 0) items.push(`Slow spending this morning. You are ${money(Math.abs(todayRemaining))} over today's target.`);
@@ -1257,9 +1245,9 @@ function App() {
     else if (tasks.length > 0) items.push("Great momentum: all planned tasks are completed.");
     if (mealStats.planned > 0 && mealStats.completed < mealStats.planned) items.push(`Meal plan is ${mealStats.completed}/${mealStats.planned}. Prep next meal early.`);
     if (dailyBriefing.nextBills > 0) items.push(`${dailyBriefing.nextBills} bill(s) due in the next 3 days. Keep a cash buffer.`);
-    if (fallbackHeadline) items.push(`News watch: ${fallbackHeadline.title}`);
+    if (leadNewsItem) items.push(`Somaliland watch: ${leadNewsItem.title}`);
     return items.slice(0, 4);
-  }, [todayRemaining, coachMemoryHighlights, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
+  }, [todayRemaining, coachMemoryHighlights, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, leadNewsItem]);
   const smartSavingsTip = useMemo(() => {
     const safeToday = Math.max(0, todayRemaining);
     const dailySaveTarget = Math.max(1, safePerDay * 0.25);
@@ -1646,8 +1634,8 @@ function App() {
     const timelineLine = timelineEvents.length === 0
       ? "Your timeline is clear right now, which means you can claim the best hours before they disappear."
       : `You've got ${timelineEvents.length} timeline block(s) — keep your next block protected.`;
-    const somalilandLine = fallbackHeadline
-      ? "Somaliland is already moving this morning — stay informed, but keep your focus tight."
+    const somalilandLine = leadNewsItem
+      ? "Somaliland updates are already moving this morning — stay informed, but keep your focus tight."
       : "Somaliland morning energy is calm right now — perfect time to make your first strong move.";
     const memoryLine = coachMemoryHighlights[0]
       ? `Coach memory: ${coachMemoryHighlights[0].summary}`
@@ -1657,7 +1645,7 @@ function App() {
       : "One move: finish your top task before you check socials again.";
     const combined = `${greeting}, ${preferredName}. ${dayPart} is here — make it count. ${budgetLine} ${taskMealLine} ${timelineLine} ${somalilandLine} ${memoryLine} ${nudge}`;
     return combined.split(/\s+/).slice(0, 80).join(" ");
-  }, [settings?.profileName, currentHour, todayRemaining, tasks.length, doneTasks, mealStats.planned, mealStats.completed, timelineEvents.length, fallbackHeadline, coachMemoryHighlights]);
+  }, [settings?.profileName, currentHour, todayRemaining, tasks.length, doneTasks, mealStats.planned, mealStats.completed, timelineEvents.length, leadNewsItem, coachMemoryHighlights]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -2750,10 +2738,10 @@ function App() {
 
                 <div className="regional-brief-panel regional-brief-panel--news">
                   <div className="regional-panel-head">
-                    <span className="regional-panel-kicker">News</span>
+                    <span className="regional-panel-kicker">Recent on X</span>
                   </div>
                   {!newsLoading && newsItems.length === 0 && !newsError && (
-                    <p className="muted">Tap Refresh for headlines.</p>
+                    <p className="muted">Tap Refresh for recent Somaliland posts.</p>
                   )}
                   {newsLoading && newsItems.length === 0 && (
                     <p className="muted">Loading…</p>
@@ -2761,27 +2749,28 @@ function App() {
                   {!newsLoading && newsError && (
                     <p className="muted">{newsError}</p>
                   )}
-                  {!newsLoading && !newsError && newsItems.length > 0 && (
-                    <button
-                      type="button"
-                      className="news-hot-item regional-news-hit"
-                      onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
-                    >
-                      <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
-                      <AnimatePresence mode="wait" initial={false}>
-                        <motion.strong
-                          key={(latestNewsIsFresh ? latestNews : fallbackHeadline).url}
-                          className="news-hot-title"
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -8 }}
-                          transition={{ duration: 0.25 }}
+                  {!newsLoading && !newsError && recentNewsItems.length > 0 && (
+                    <div className="news-feed-list">
+                      {recentNewsItems.slice(0, 4).map((item) => (
+                        <button
+                          key={item.url}
+                          type="button"
+                          className="news-feed-item regional-news-hit"
+                          onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}
                         >
-                          {(latestNewsIsFresh ? latestNews : fallbackHeadline).title}
-                        </motion.strong>
-                      </AnimatePresence>
-                      <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
-                    </button>
+                          <div className="news-feed-meta">
+                            <span className="news-feed-source">{item.source}</span>
+                            <span className="muted">
+                              {item.publishedAt
+                                ? `${formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true })}`
+                                : "Recent"}
+                            </span>
+                          </div>
+                          <strong className="news-feed-title">{item.title}</strong>
+                          <p className="muted news-feed-description">{item.description}</p>
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
                 </div>
@@ -4420,22 +4409,34 @@ function App() {
                 </div>
                 <div className="morning-news">
                   <div className="row">
-                    <h4>Hot Somaliland news</h4>
+                    <h4>Recent Somaliland on X</h4>
                     <button type="button" className="ghost-btn" onClick={() => { void refreshRegionalBrief(); }}>Refresh</button>
                   </div>
-                  {!newsLoading && fallbackHeadline && (
-                    <button
-                      type="button"
-                      className="news-hot-item"
-                      onClick={() => window.open((latestNewsIsFresh ? latestNews : fallbackHeadline).url, "_blank", "noopener,noreferrer")}
-                    >
-                      <span className="news-hot-label">{latestNewsIsFresh ? "Latest news" : "Hot headline"}</span>
-                      <strong className="news-hot-title">{(latestNewsIsFresh ? latestNews : fallbackHeadline).title}</strong>
-                      <span className="muted">{(latestNewsIsFresh ? latestNews : fallbackHeadline).source}</span>
-                    </button>
+                  {!newsLoading && recentNewsItems.length > 0 && (
+                    <div className="news-feed-list">
+                      {recentNewsItems.slice(0, 3).map((item) => (
+                        <button
+                          key={`morning-${item.url}`}
+                          type="button"
+                          className="news-feed-item"
+                          onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}
+                        >
+                          <div className="news-feed-meta">
+                            <span className="news-feed-source">{item.source}</span>
+                            <span className="muted">
+                              {item.publishedAt
+                                ? `${formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true })}`
+                                : "Recent"}
+                            </span>
+                          </div>
+                          <strong className="news-feed-title">{item.title}</strong>
+                          <p className="muted news-feed-description">{item.description}</p>
+                        </button>
+                      ))}
+                    </div>
                   )}
                   {newsLoading && <p className="muted">Loading latest Somaliland updates...</p>}
-                  {!newsLoading && !fallbackHeadline && <p className="muted">No headlines yet. Tap refresh to check again.</p>}
+                  {!newsLoading && recentNewsItems.length === 0 && <p className="muted">No recent Somaliland posts yet. Tap refresh to check again.</p>}
                 </div>
                 <div className="morning-news">
                   <div className="row">
@@ -5317,7 +5318,17 @@ function IosIcon({
   if (name === "settings") return filled
     ? <svg viewBox="0 0 24 24"><path fill="currentColor" d="m21.1 13.3-.9-.5a8.6 8.6 0 0 0 0-1.6l1-.5a1 1 0 0 0 .4-1.3l-1-1.8a1 1 0 0 0-1.3-.4l-1 .4a7 7 0 0 0-1.4-.9l-.1-1.1a1 1 0 0 0-1-.9h-2a1 1 0 0 0-1 .9l-.1 1.1a7 7 0 0 0-1.4 1l-1-.5a1 1 0 0 0-1.3.4l-1 1.8a1 1 0 0 0 .4 1.3l1 .5a8.6 8.6 0 0 0 0 1.6l-1 .5a1 1 0 0 0-.4 1.3l1 1.8a1 1 0 0 0 1.3.4l1-.4a7 7 0 0 0 1.4.9l.1 1.1a1 1 0 0 0 1 .9h2a1 1 0 0 0 1-.9l.1-1.1a7 7 0 0 0 1.4-1l1 .5a1 1 0 0 0 1.3-.4l1-1.8a1 1 0 0 0-.4-1.3ZM12 15.5a3.5 3.5 0 1 1 0-7.1 3.5 3.5 0 0 1 0 7Z" /></svg>
     : <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" strokeWidth="1.8" /><path d="M19.4 14.2a1 1 0 0 0 .2 1.1l.1.1a1.2 1.2 0 0 1 0 1.7l-.5.5a1.2 1.2 0 0 1-1.7 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9v.2a1.2 1.2 0 0 1-1.2 1.2h-.7a1.2 1.2 0 0 1-1.2-1.2v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.2 1.2 0 0 1-1.7 0l-.5-.5a1.2 1.2 0 0 1 0-1.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6h-.2a1.2 1.2 0 0 1-1.2-1.2v-.7a1.2 1.2 0 0 1 1.2-1.2h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.2 1.2 0 0 1 0-1.7l.5-.5a1.2 1.2 0 0 1 1.7 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V5.5a1.2 1.2 0 0 1 1.2-1.2h.7a1.2 1.2 0 0 1 1.2 1.2v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.2 1.2 0 0 1 1.7 0l.5.5a1.2 1.2 0 0 1 0 1.7l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a1.2 1.2 0 0 1 1.2 1.2v.7a1.2 1.2 0 0 1-1.2 1.2h-.2a1 1 0 0 0-.9.6Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  if (name === "ai") return <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.8c3.9 0 7 2.8 7 6.2 0 2-1.1 3.8-2.9 4.9v3.3a1 1 0 0 1-1.6.8l-2.1-1.6c-.2 0-.3 0-.4 0-3.9 0-7-2.8-7-6.2s3.1-6.2 7-6.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><circle cx="9" cy="10.1" r="1.1" fill="currentColor" /><circle cx="12" cy="10.1" r="1.1" fill="currentColor" /><circle cx="15" cy="10.1" r="1.1" fill="currentColor" /></svg>;
+  if (name === "ai") return (
+    <svg viewBox="0 0 24 24" fill="none">
+      <path
+        d="M12 4.5 13.8 10.2 19.5 12l-5.7 1.8L12 19.5l-1.8-5.7L4.5 12l5.7-1.8L12 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <circle cx="18.2" cy="5.8" r="1.2" fill="currentColor" />
+    </svg>
+  );
   if (name === "streak") return <svg viewBox="0 0 24 24" fill="none"><path d="M13.2 3.8c.3 2.5-.5 4-2.4 5.5-1.2 1-2.3 2.3-2.3 4.2 0 2.2 1.8 4 4 4 2.5 0 4.4-2 4.4-4.5 0-2.8-1.6-4.4-3.7-5.9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><path d="M12.3 10.6c.2 1.4-.2 2.3-1.2 3-.6.5-1 1.1-1 2 0 1.1.9 2 2 2 1.2 0 2.1-.9 2.1-2.2 0-1.4-.8-2.3-1.9-2.8" fill="currentColor" /></svg>;
   return <svg viewBox="0 0 24 24" fill="none"><path d="m12 4 1.9 3.8 4.1.6-3 2.9.7 4.1L12 13.4l-3.7 2 .7-4.1-3-2.9 4.1-.6L12 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /></svg>;
 }

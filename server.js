@@ -16,12 +16,14 @@ const NITTER_RSS_SOURCES = [
   "https://nitter.privacydev.net",
   "https://nitter.esmailelbob.xyz",
 ];
-const SOMALILAND_TERMS = ["somaliland", "hargeisa", "berbera", "borama"];
+const SOMALILAND_TERMS = ["somaliland", "hargeisa", "berbera", "borama", "burao", "ceerigaabo", "las anod"];
 const FALLBACK_NEWS_KEY = "g-UpSttv40RqUFUc877PGn7mLj4Xof8PlcZZuCTr-hbh4l7P";
 const X_QUERY_VARIANTS = [
-  "Somaliland OR Hargeisa OR Berbera OR Borama",
-  "#Somaliland OR Somaliland news",
-  "Somaliland politics OR Somaliland economy OR Somaliland government",
+  "Somaliland OR Hargeisa OR Berbera OR Borama OR Burao OR Ceerigaabo",
+  "#Somaliland OR Somaliland news OR Somaliland update",
+  "Somaliland politics OR Somaliland economy OR Somaliland government OR Somaliland business",
+  "Somaliland sports OR Somaliland culture OR Somaliland education OR Somaliland health",
+  "Hargeisa traffic OR Berbera port OR Somaliland airlines OR Somaliland election",
 ];
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -99,6 +101,16 @@ function dedupeNews(items) {
   });
 }
 
+function sortNewsByRecency(items) {
+  return [...items].sort((a, b) => {
+    const ta = Date.parse(a.publishedAt || "");
+    const tb = Date.parse(b.publishedAt || "");
+    const safeA = Number.isFinite(ta) ? ta : 0;
+    const safeB = Number.isFinite(tb) ? tb : 0;
+    return safeB - safeA;
+  });
+}
+
 async function fetchXBriefItems(queries) {
   const collected = [];
   const relevant = [];
@@ -116,29 +128,29 @@ async function fetchXBriefItems(queries) {
         const topical = items.filter(isSomalilandRelevant);
         relevant.push(...topical);
         collected.push(...items);
-        if (relevant.length >= 5) {
-          return dedupeNews(relevant);
+        if (relevant.length >= 8) {
+          return sortNewsByRecency(dedupeNews(relevant));
         }
-        if (collected.length >= 12) {
-          return dedupeNews(relevant.length > 0 ? relevant : collected);
+        if (collected.length >= 20) {
+          return sortNewsByRecency(dedupeNews(relevant.length > 0 ? relevant : collected));
         }
       } catch {
         // continue with next mirror
       }
     }
   }
-  return dedupeNews(relevant.length > 0 ? relevant : collected);
+  return sortNewsByRecency(dedupeNews(relevant.length > 0 ? relevant : collected));
 }
 
 app.get("/api/x-brief", async (req, res) => {
   const items = await fetchXBriefItems(X_QUERY_VARIANTS);
-  return res.status(200).json({ items: items.slice(0, 5) });
+  return res.status(200).json({ items: items.slice(0, 10) });
 });
 
 app.get("/api/news-brief", async (req, res) => {
   try {
-    const items = dedupeNews(await fetchXBriefItems(X_QUERY_VARIANTS));
-    return res.status(200).json({ items: items.slice(0, 5) });
+    const items = sortNewsByRecency(dedupeNews(await fetchXBriefItems(X_QUERY_VARIANTS)));
+    return res.status(200).json({ items: items.slice(0, 10) });
   } catch {
     return res.status(200).json({ items: [] });
   }
