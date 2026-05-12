@@ -1,8 +1,11 @@
 import Dexie, { type Table } from "dexie";
 import type {
   CategoryRule,
+  CoachMemory,
+  DailyContextNote,
   PlannedCashflowItem,
   RecurringIncome,
+  SavingsGoal,
   Settings,
   Subscription,
   Transaction,
@@ -13,6 +16,9 @@ class ZeroDB extends Dexie {
   subscriptions!: Table<Subscription, number>;
   recurringIncome!: Table<RecurringIncome, number>;
   plannedCashflows!: Table<PlannedCashflowItem, number>;
+  savingsGoals!: Table<SavingsGoal, number>;
+  coachMemories!: Table<CoachMemory, number>;
+  dailyContextNotes!: Table<DailyContextNote, number>;
   settings!: Table<Settings, number>;
   categoryRules!: Table<CategoryRule, number>;
   routinePlans!: Table<{ id?: number; date: string; title: string; hour: number; category: string; createdAt: string }, number>;
@@ -77,6 +83,39 @@ class ZeroDB extends Dexie {
           }
         });
       });
+    this.version(6).stores({
+      transactions: "++id, date, type, category, createdAt",
+      subscriptions: "++id, nextBillingDate, cycle, createdAt",
+      recurringIncome: "++id, nextDate, cycle, createdAt",
+      plannedCashflows: "++id, date, kind, createdAt",
+      savingsGoals: "++id, active, targetDate, createdAt",
+      settings: "id",
+      categoryRules: "++id, keyword, category, updatedAt",
+      routinePlans: "++id, date, hour, category, createdAt",
+    });
+    this.version(7).stores({
+      transactions: "++id, date, type, category, createdAt",
+      subscriptions: "++id, nextBillingDate, cycle, createdAt",
+      recurringIncome: "++id, nextDate, cycle, createdAt",
+      plannedCashflows: "++id, date, kind, createdAt",
+      savingsGoals: "++id, active, targetDate, createdAt",
+      coachMemories: "++id, kind, confidence, updatedAt",
+      settings: "id",
+      categoryRules: "++id, keyword, category, updatedAt",
+      routinePlans: "++id, date, hour, category, createdAt",
+    });
+    this.version(8).stores({
+      transactions: "++id, date, type, category, createdAt",
+      subscriptions: "++id, nextBillingDate, cycle, createdAt",
+      recurringIncome: "++id, nextDate, cycle, createdAt",
+      plannedCashflows: "++id, date, kind, createdAt",
+      savingsGoals: "++id, active, targetDate, createdAt",
+      coachMemories: "++id, kind, confidence, updatedAt",
+      dailyContextNotes: "++id, date, aiVisible, updatedAt",
+      settings: "id",
+      categoryRules: "++id, keyword, category, updatedAt",
+      routinePlans: "++id, date, hour, category, createdAt",
+    });
   }
 }
 

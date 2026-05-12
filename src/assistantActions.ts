@@ -55,6 +55,12 @@ export type AssistantExecutors<TimelineEvent, Task extends { id: number; title: 
     date: string;
     category?: string;
   }) => Promise<void>;
+  addSavingsGoal: (row: {
+    title: string;
+    targetAmount: number;
+    targetDate: string;
+    active: boolean;
+  }) => Promise<void>;
   updateSettings: (row: Partial<Settings>) => Promise<void>;
   reloadPlanAhead: () => Promise<void>;
 };
@@ -425,6 +431,24 @@ export async function executeAssistantPayload<
           category: category || undefined,
         });
         applied.push(`Added ${kind === "savings_transfer" ? "savings transfer" : "planned expense"} “${title}”.`);
+        continue;
+      }
+
+      if (type === "add_savings_goal") {
+        const title = String(act.title ?? "").trim().slice(0, 120) || "Savings goal";
+        const targetAmount = Math.min(Math.abs(Number(act.targetAmount) || 0), MAX_TX_AMOUNT);
+        const targetDate = act.targetDate;
+        if (targetAmount <= 0 || !isIsoDay(targetDate)) {
+          errors.push("add_savings_goal: need title, targetAmount, and targetDate.");
+          continue;
+        }
+        await exec.addSavingsGoal({
+          title,
+          targetAmount,
+          targetDate: new Date(targetDate).toISOString(),
+          active: true,
+        });
+        applied.push(`Created savings goal “${title}” for $${targetAmount.toFixed(2)}.`);
         continue;
       }
 

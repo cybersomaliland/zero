@@ -44,6 +44,42 @@ export type PlannedCashflowItem = {
   createdAt: string;
 };
 
+export type SavingsGoal = {
+  id?: number;
+  title: string;
+  targetAmount: number;
+  targetDate: string;
+  active: boolean;
+  createdAt: string;
+};
+
+export type CoachMemoryKind =
+  | "weekend_overspend"
+  | "subscription_blindspot"
+  | "post_payday_savings";
+
+export type CoachMemory = {
+  id?: number;
+  kind: CoachMemoryKind;
+  title: string;
+  summary: string;
+  evidence: string[];
+  confidence: number;
+  updatedAt: string;
+  createdAt: string;
+};
+
+export type DailyContextNote = {
+  id?: number;
+  date: string;
+  title: string;
+  body: string;
+  tags: string[];
+  aiVisible: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Push types aligned with server `buildNotification` keys. */
 export type PushNotificationKind =
   | "bill_due_tomorrow"

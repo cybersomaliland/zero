@@ -51,6 +51,60 @@ export async function askGroqFinanceAssistant(params: {
     requiredCorrection?: { amountPerDay: number; days: number; targetDate: string; targetLabel: string } | null;
     irregularExpenses?: Array<{ date: string; label: string; amount: number; category: string }>;
   };
+  savingsGoalSummary?: {
+    goal: { title: string; targetAmount: number; targetDate: string } | null;
+    requiredMonthly?: number;
+    projectedNaturalSavings?: number;
+    plans?: Array<{
+      kind: string;
+      label: string;
+      monthlyContribution: number;
+      projectedSaved: number;
+      remainingGap: number;
+      hitsGoal: boolean;
+      bufferRisk: string;
+      confidence: string;
+    }>;
+  };
+  metricExplanationSummary?: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    bullets: string[];
+  }>;
+  decisionSummary?: {
+    amount: number;
+    shortTermVerdict: string;
+    shortTermReason: string;
+    safeToday: number;
+    todayAfterPurchase: number;
+    weekEndBalance: number | null;
+    monthEndBalance: number | null;
+    createsRiskDay: boolean;
+    nextRiskDate: string | null;
+    goal: {
+      title: string;
+      delayed: boolean;
+      delayDays: number | null;
+      currentGap: number;
+      gapAfterPurchase: number;
+    } | null;
+  };
+  coachMemorySummary?: Array<{
+    kind: string;
+    title: string;
+    summary: string;
+    confidence: number;
+    evidence: string[];
+  }>;
+  dailyNoteSummary?: Array<{
+    date: string;
+    title: string;
+    body: string;
+    tags: string[];
+    aiVisible: boolean;
+    updatedAt: string;
+  }>;
   financeSnapshot: {
     monthlySalary: number;
     currentBalance: number;
@@ -220,6 +274,8 @@ export async function askGroqFinanceAssistant(params: {
       responseContract: [
         "Avoid assistant clichés (\"great question\", \"happy to help\", vague tips). Sound bespoke.",
         "Lead with verdict or answer, grounded in financeSnapshot + routineSnapshot + recentTransactions/upcomingSubscriptions when relevant.",
+        "When coachMemory exists, personalize advice around those established tendencies instead of giving generic behavior tips.",
+        "When dailyNotes exist, use them as the user's stated context about what happened, why it mattered, and what to remember next.",
         "When context includes checklist tasks or timeline blocks, reference at least one real title (shortened ok) on substantive replies.",
         "Cite at least two concrete anchors when JSON provides them (e.g. two numbers, or one number + one named item).",
         "End with a specific invite tied to their situation when appropriate — not a generic \"anything else?\".",
@@ -249,6 +305,11 @@ export async function askGroqFinanceAssistant(params: {
       recurringIncome: params.recurringIncome.slice(0, 12),
       plannedCashflows: params.plannedCashflows.slice(0, 20),
     },
+    savingsGoal: params.savingsGoalSummary,
+    explainableMoneyMetrics: params.metricExplanationSummary,
+    decisionAssistant: params.decisionSummary,
+    coachMemory: params.coachMemorySummary,
+    dailyNotes: params.dailyNoteSummary,
     recentTransactions,
     upcomingSubscriptions,
     forecastData: params.forecastData.slice(0, 30),

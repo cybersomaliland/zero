@@ -3,8 +3,11 @@ import { db, seedIfEmpty } from "./db";
 import { inferCategory } from "./logic";
 import { dedupeNormalizedTransactions, normalizeTransactionInput } from "./quality";
 import type {
+  CoachMemory,
+  DailyContextNote,
   PlannedCashflowItem,
   RecurringIncome,
+  SavingsGoal,
   Settings,
   Subscription,
   Transaction,
@@ -18,6 +21,9 @@ type State = {
   subscriptions: Subscription[];
   recurringIncome: RecurringIncome[];
   plannedCashflows: PlannedCashflowItem[];
+  savingsGoals: SavingsGoal[];
+  coachMemories: CoachMemory[];
+  dailyContextNotes: DailyContextNote[];
   settings: Settings | null;
   rules: { keyword: string; category: string }[];
   init: () => Promise<void>;
@@ -32,6 +38,12 @@ type State = {
   addPlannedCashflow: (row: Omit<PlannedCashflowItem, "id" | "createdAt">) => Promise<void>;
   updatePlannedCashflow: (id: number, row: Partial<PlannedCashflowItem>) => Promise<void>;
   deletePlannedCashflow: (id: number) => Promise<void>;
+  addSavingsGoal: (row: Omit<SavingsGoal, "id" | "createdAt">) => Promise<void>;
+  updateSavingsGoal: (id: number, row: Partial<SavingsGoal>) => Promise<void>;
+  deleteSavingsGoal: (id: number) => Promise<void>;
+  replaceCoachMemories: (rows: Array<Omit<CoachMemory, "id" | "createdAt">>) => Promise<void>;
+  upsertDailyContextNote: (row: Omit<DailyContextNote, "id" | "createdAt" | "updatedAt">) => Promise<void>;
+  deleteDailyContextNote: (id: number) => Promise<void>;
   addTransactionsBulk: (rows: Array<Omit<Transaction, "id" | "createdAt" | "category"> & { category?: string }>) => Promise<void>;
   updateSettings: (s: Partial<Settings>) => Promise<void>;
   learnRule: (keyword: string, category: string) => Promise<void>;
@@ -45,25 +57,43 @@ export const useZeroStore = create<State>((set, get) => ({
   subscriptions: [],
   recurringIncome: [],
   plannedCashflows: [],
+  savingsGoals: [],
+  coachMemories: [],
+  dailyContextNotes: [],
   settings: null,
   rules: [],
   init: async () => {
     await seedIfEmpty();
-    const [transactions, subscriptions, recurringIncome, plannedCashflows, settings, rules] = await Promise.all([
+    const [transactions, subscriptions, recurringIncome, plannedCashflows, savingsGoals, coachMemories, dailyContextNotes, settings, rules] = await Promise.all([
       db.transactions.reverse().sortBy("date"),
       db.subscriptions.toArray(),
       db.recurringIncome.toArray(),
       db.plannedCashflows.toArray(),
+      db.savingsGoals.toArray(),
+      db.coachMemories.toArray(),
+      db.dailyContextNotes.toArray(),
       db.settings.get(1),
       db.categoryRules.toArray(),
     ]);
     recurringIncome.sort((a, b) => a.nextDate.localeCompare(b.nextDate));
     plannedCashflows.sort((a, b) => a.date.localeCompare(b.date));
+    savingsGoals.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    coachMemories.sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
+    dailyContextNotes.sort((a, b) => {
+      if (b.date !== a.date) return b.date.localeCompare(a.date);
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
     set({
       transactions,
       subscriptions,
       recurringIncome,
       plannedCashflows,
+      savingsGoals,
+      coachMemories,
+      dailyContextNotes,
       settings: settings ?? null,
       rules,
       loading: false,
@@ -146,6 +176,62 @@ export const useZeroStore = create<State>((set, get) => ({
     await db.plannedCashflows.delete(id);
     await get().init();
   },
+  addSavingsGoal: async (row) => {
+    if (row.active) {
+      await db.savingsGoals.toCollection().modify((goal) => {
+        goal.active = false;
+      });
+    }
+    await db.savingsGoals.add({ ...row, createdAt: new Date().toISOString() });
+    await get().init();
+  },
+  updateSavingsGoal: async (id, row) => {
+    if (row.active) {
+      await db.savingsGoals.toCollection().modify((goal) => {
+        if (goal.id !== id) goal.active = false;
+      });
+    }
+    await db.savingsGoals.update(id, row);
+    await get().init();
+  },
+  deleteSavingsGoal: async (id) => {
+    await db.savingsGoals.delete(id);
+    await get().init();
+  },
+  replaceCoachMemories: async (rows) => {
+    const existing = await db.coachMemories.toArray();
+    const existingByKind = new Map(existing.map((memory) => [memory.kind, memory]));
+    await db.coachMemories.clear();
+    if (rows.length > 0) {
+      const now = new Date().toISOString();
+      await db.coachMemories.bulkAdd(rows.map((row) => ({
+        ...row,
+        createdAt: existingByKind.get(row.kind)?.createdAt ?? now,
+      })));
+    }
+    await get().init();
+  },
+  upsertDailyContextNote: async (row) => {
+    const existing = await db.dailyContextNotes.where("date").equals(row.date).first();
+    const now = new Date().toISOString();
+    if (existing?.id) {
+      await db.dailyContextNotes.update(existing.id, {
+        ...row,
+        updatedAt: now,
+      });
+    } else {
+      await db.dailyContextNotes.add({
+        ...row,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    await get().init();
+  },
+  deleteDailyContextNote: async (id) => {
+    await db.dailyContextNotes.delete(id);
+    await get().init();
+  },
   addTransactionsBulk: async (rows) => {
     const { rules } = get();
     const normalizedRows = rows.map((t) => normalizeTransactionInput(t));
@@ -199,6 +285,9 @@ export const useZeroStore = create<State>((set, get) => ({
       db.subscriptions.clear(),
       db.recurringIncome.clear(),
       db.plannedCashflows.clear(),
+      db.savingsGoals.clear(),
+      db.coachMemories.clear(),
+      db.dailyContextNotes.clear(),
       db.settings.clear(),
       db.categoryRules.clear(),
     ]);

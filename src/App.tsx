@@ -1,20 +1,27 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { differenceInCalendarDays, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, formatDistanceToNow, getDay, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, subDays } from "date-fns";
+import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth, subDays } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { askGroqFinanceAssistant } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { buildCashflowForecast } from "./cashflow";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
+import { buildCoachMemories } from "./coachMemory";
 import { db } from "./db";
 import {
+  assessAffordability,
   askFinanceAssistant,
+  buildMoneyMetricExplanations,
+  buildSavingsGoalPlanner,
   computeBudgetSnapshot,
   countOverBudgetDaysInMonth,
   countSubscriptionsDueThisWeek,
   getUpcomingBills,
+  matchMoneyExplanationQuestion,
   money,
   nextDateFromCycle,
   simulateWhatIfScenario,
+  type MoneyMetricExplanation,
+  type MoneyMetricExplanationId,
 } from "./logic";
 import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
 import { fetchSomalilandNews, type NewsItem } from "./news";
@@ -162,6 +169,12 @@ type PlannedCashflowDraft = {
   date: string;
   category: string;
 };
+type DailyContextNoteDraft = {
+  title: string;
+  body: string;
+  tags: string;
+  aiVisible: boolean;
+};
 
 function todayInputValue() {
   return format(new Date(), "yyyy-MM-dd");
@@ -188,6 +201,15 @@ function createEmptyPlannedCashflowDraft(): PlannedCashflowDraft {
   };
 }
 
+function createEmptyDailyContextNoteDraft(): DailyContextNoteDraft {
+  return {
+    title: "",
+    body: "",
+    tags: "",
+    aiVisible: true,
+  };
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -206,6 +228,9 @@ function App() {
     subscriptions,
     recurringIncome,
     plannedCashflows,
+    savingsGoals,
+    coachMemories,
+    dailyContextNotes,
     settings,
     init,
     addTransaction,
@@ -219,8 +244,12 @@ function App() {
     addPlannedCashflow,
     updatePlannedCashflow,
     deletePlannedCashflow,
+    addSavingsGoal,
     addTransactionsBulk,
     updateSettings,
+    replaceCoachMemories,
+    upsertDailyContextNote,
+    deleteDailyContextNote,
     clearData,
     recategorizeTransactions,
   } = useZeroStore();
@@ -252,15 +281,17 @@ function App() {
     }
     return false;
   });
-  const [moneyThisWeekExpanded, setMoneyThisWeekExpanded] = useState(() => {
+  const [cashflowOutlookExpanded, setCashflowOutlookExpanded] = useState(false);
+  const [todayNoteExpanded, setTodayNoteExpanded] = useState(() => {
     try {
-      const s = localStorage.getItem("zero_money_this_week_expanded_v1");
-      return s === "1";
+      const s = localStorage.getItem("zero_today_note_expanded_v1");
+      return s !== "0";
     } catch {
       // ignore
     }
-    return false;
+    return true;
   });
+  const [activeMoneyExplanation, setActiveMoneyExplanation] = useState<MoneyMetricExplanationId | null>(null);
   const [activeHeadlineIndex, setActiveHeadlineIndex] = useState(0);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
@@ -289,6 +320,8 @@ function App() {
   const [incomeDraftError, setIncomeDraftError] = useState("");
   const [plannedCashflowDraft, setPlannedCashflowDraft] = useState<PlannedCashflowDraft>(() => createEmptyPlannedCashflowDraft());
   const [plannedCashflowDraftError, setPlannedCashflowDraftError] = useState("");
+  const [dailyContextNoteDraft, setDailyContextNoteDraft] = useState<DailyContextNoteDraft>(() => createEmptyDailyContextNoteDraft());
+  const [dailyContextNoteStatus, setDailyContextNoteStatus] = useState("");
   const [dismissedSubscriptionSuggestions, setDismissedSubscriptionSuggestions] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem("zero_subscription_detection_dismissed_v1");
@@ -688,16 +721,6 @@ function App() {
   }, [regionalBriefExpanded]);
   useEffect(() => {
     try {
-      localStorage.setItem(
-        "zero_money_this_week_expanded_v1",
-        moneyThisWeekExpanded ? "1" : "0",
-      );
-    } catch {
-      // ignore
-    }
-  }, [moneyThisWeekExpanded]);
-  useEffect(() => {
-    try {
       localStorage.setItem("zero_streak_protection_v1", streakProtectionEnabled ? "1" : "0");
     } catch {
       // ignore
@@ -734,6 +757,13 @@ function App() {
       JSON.stringify(dismissedSubscriptionSuggestions.slice(0, 200)),
     );
   }, [dismissedSubscriptionSuggestions]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("zero_today_note_expanded_v1", todayNoteExpanded ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [todayNoteExpanded]);
 
   useEffect(() => {
     if (!assistantOpen) return;
@@ -909,6 +939,51 @@ function App() {
     () => cashflowForecast?.upcomingEvents.slice(0, 6) ?? [],
     [cashflowForecast],
   );
+  const activeSavingsGoal = useMemo(
+    () => savingsGoals.find((goal) => goal.active) ?? savingsGoals[savingsGoals.length - 1] ?? null,
+    [savingsGoals],
+  );
+  const savingsGoalPlanner = useMemo(
+    () => buildSavingsGoalPlanner({
+      goal: activeSavingsGoal,
+      transactions,
+      subscriptions,
+      recurringIncome,
+      plannedCashflows,
+      settings,
+    }),
+    [activeSavingsGoal, transactions, subscriptions, recurringIncome, plannedCashflows, settings],
+  );
+  const moneyMetricExplanations = useMemo(
+    () => buildMoneyMetricExplanations({
+      settings,
+      transactions,
+      subscriptions,
+      recurringIncome,
+      plannedCashflows,
+      activeGoal: activeSavingsGoal,
+      budgetSnapshot,
+      cashflowForecast,
+      goalPlanner: savingsGoalPlanner,
+      referenceDate: liveNow,
+    }),
+    [
+      settings,
+      transactions,
+      subscriptions,
+      recurringIncome,
+      plannedCashflows,
+      activeSavingsGoal,
+      budgetSnapshot,
+      cashflowForecast,
+      savingsGoalPlanner,
+      liveNow,
+    ],
+  );
+  const activeMoneyExplanationCard = useMemo(
+    () => moneyMetricExplanations.find((item) => item.id === activeMoneyExplanation) ?? null,
+    [moneyMetricExplanations, activeMoneyExplanation],
+  );
   const subscriptionSuggestions = useMemo(
     () => detectSubscriptionCandidates(
       transactions,
@@ -917,6 +992,67 @@ function App() {
     ),
     [transactions, subscriptions, dismissedSubscriptionSuggestions],
   );
+  const computedCoachMemories = useMemo(
+    () => buildCoachMemories({
+      transactions,
+      subscriptions,
+      dismissedSubscriptionSuggestions,
+      referenceDate: liveNow,
+    }),
+    [transactions, subscriptions, dismissedSubscriptionSuggestions, liveNow],
+  );
+  const computedCoachMemoriesKey = useMemo(
+    () => JSON.stringify(computedCoachMemories),
+    [computedCoachMemories],
+  );
+  const storedCoachMemoriesKey = useMemo(
+    () => JSON.stringify(coachMemories.map((memory) => ({
+      kind: memory.kind,
+      title: memory.title,
+      summary: memory.summary,
+      evidence: memory.evidence,
+      confidence: memory.confidence,
+      updatedAt: memory.updatedAt,
+    }))),
+    [coachMemories],
+  );
+  const coachMemoryHighlights = useMemo(
+    () => coachMemories.slice(0, 3),
+    [coachMemories],
+  );
+  const todayIso = useMemo(() => format(liveNow, "yyyy-MM-dd"), [liveNow]);
+  const todayContextNote = useMemo(
+    () => dailyContextNotes.find((note) => note.date === todayIso) ?? null,
+    [dailyContextNotes, todayIso],
+  );
+  const recentAiVisibleNotes = useMemo(
+    () => dailyContextNotes
+      .filter((note) => note.aiVisible && (note.title.trim() || note.body.trim()))
+      .slice(0, 5),
+    [dailyContextNotes],
+  );
+  const recentDailyContextNotes = useMemo(
+    () => dailyContextNotes.slice(0, 6),
+    [dailyContextNotes],
+  );
+  const todayNotePreview = useMemo(() => {
+    const source = (todayContextNote?.body || todayContextNote?.title || "").trim();
+    if (!source) return "Capture what happened, why it mattered, and what to remember next.";
+    return source.length > 110 ? `${source.slice(0, 110).trim()}...` : source;
+  }, [todayContextNote]);
+  useEffect(() => {
+    if (computedCoachMemoriesKey === storedCoachMemoriesKey) return;
+    void replaceCoachMemories(computedCoachMemories);
+  }, [computedCoachMemories, computedCoachMemoriesKey, storedCoachMemoriesKey, replaceCoachMemories]);
+  useEffect(() => {
+    setDailyContextNoteDraft({
+      title: todayContextNote?.title ?? "",
+      body: todayContextNote?.body ?? "",
+      tags: todayContextNote?.tags.join(", ") ?? "",
+      aiVisible: todayContextNote?.aiVisible ?? true,
+    });
+    setDailyContextNoteStatus("");
+  }, [todayContextNote?.id, todayContextNote?.updatedAt]);
   const spendingCalendar = useMemo(() => {
     const now = new Date();
     const monthStart = startOfMonth(now);
@@ -1116,13 +1252,14 @@ function App() {
     const items: string[] = [];
     if (todayRemaining < 0) items.push(`Slow spending this morning. You are ${money(Math.abs(todayRemaining))} over today's target.`);
     else items.push(`You are within budget with about ${money(todayRemaining)} left for today.`);
+    if (coachMemoryHighlights[0]) items.push(coachMemoryHighlights[0].summary);
     if (tasks.length > 0 && doneTasks < tasks.length) items.push(`Complete 1 priority task now (${doneTasks}/${tasks.length} done).`);
     else if (tasks.length > 0) items.push("Great momentum: all planned tasks are completed.");
     if (mealStats.planned > 0 && mealStats.completed < mealStats.planned) items.push(`Meal plan is ${mealStats.completed}/${mealStats.planned}. Prep next meal early.`);
     if (dailyBriefing.nextBills > 0) items.push(`${dailyBriefing.nextBills} bill(s) due in the next 3 days. Keep a cash buffer.`);
     if (fallbackHeadline) items.push(`News watch: ${fallbackHeadline.title}`);
     return items.slice(0, 4);
-  }, [todayRemaining, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
+  }, [todayRemaining, coachMemoryHighlights, tasks.length, doneTasks, mealStats, dailyBriefing.nextBills, fallbackHeadline]);
   const smartSavingsTip = useMemo(() => {
     const safeToday = Math.max(0, todayRemaining);
     const dailySaveTarget = Math.max(1, safePerDay * 0.25);
@@ -1153,93 +1290,6 @@ function App() {
     if (todayRemaining < 0) return `You've gone ${money(Math.abs(todayRemaining))} over today. Keep tomorrow lighter.`;
     return `You're on track. ${money(todayRemaining)} left for today.`;
   }, [todaySpent, todayRemaining]);
-  const moneyThisWeek = useMemo(() => {
-    const weekStartsOn = 6 as const;
-    const now = new Date();
-    const thisWeekStart = startOfWeek(now, { weekStartsOn });
-    const thisWeekEndDay = endOfWeek(now, { weekStartsOn });
-    const thisWeekInterval = { start: startOfDay(thisWeekStart), end: endOfDay(thisWeekEndDay) };
-
-    const dateInInterval = (iso: string, interval: typeof thisWeekInterval) => {
-      const d = parseISO(iso);
-      if (!Number.isFinite(+d)) return false;
-      return isWithinInterval(startOfDay(d), interval);
-    };
-
-    const thisWeekTx = transactions.filter((tx) => dateInInterval(tx.date, thisWeekInterval));
-
-    const totals = (txs: typeof transactions) => ({
-      spent: txs.filter((t) => t.type === "expense").reduce((sum, t) => sum + Math.abs(t.amount), 0),
-      income: txs.filter((t) => t.type === "income").reduce((sum, t) => sum + Math.abs(t.amount), 0),
-    });
-    const thisTotals = totals(thisWeekTx);
-    const thisTopCategory = Object.entries(
-      thisWeekTx
-        .filter((t) => t.type === "expense")
-        .reduce<Record<string, number>>((acc, t) => {
-          acc[t.category] = (acc[t.category] || 0) + Math.abs(t.amount);
-          return acc;
-        }, {}),
-    ).sort((a, b) => b[1] - a[1])[0];
-
-    const weekRange = `${format(thisWeekStart, "MMM d")}–${format(thisWeekEndDay, "MMM d")}`;
-
-    const daysLeftWeek = Math.max(0, budgetSnapshot.daysLeftInWeek);
-    const paceUnavailable = safePerDay <= 0;
-    const weekClosing = daysLeftWeek <= 0;
-    const runwayTotal = !paceUnavailable && !weekClosing ? safePerDay * daysLeftWeek : null;
-
-    const todayCap = startOfDay(now);
-    const weekLastDay = startOfDay(thisWeekEndDay);
-    const spendRangeEnd = todayCap.getTime() <= weekLastDay.getTime() ? todayCap : weekLastDay;
-    const weekDaysElapsed = eachDayOfInterval({ start: startOfDay(thisWeekStart), end: spendRangeEnd });
-    const dayKeys = weekDaysElapsed.map((d) => format(d, "yyyy-MM-dd"));
-    const spendByDay: Record<string, number> = Object.fromEntries(dayKeys.map((k) => [k, 0]));
-    for (const tx of thisWeekTx) {
-      if (tx.type !== "expense") continue;
-      const key = format(parseISO(tx.date), "yyyy-MM-dd");
-      if (key in spendByDay) spendByDay[key] += Math.abs(tx.amount);
-    }
-    const pairs = dayKeys.map((k) => [k, spendByDay[k]] as const);
-    const maxSpend = pairs.reduce((m, [, v]) => Math.max(m, v), 0);
-    const minSpend = pairs.reduce((m, [, v]) => Math.min(m, v), Number.POSITIVE_INFINITY);
-
-    type DayRhythm =
-      | { kind: "unavailable" }
-      | { kind: "no-expenses" }
-      | { kind: "flat"; amount: number }
-      | { kind: "compare"; lightest: { dateKey: string; amount: number }; heaviest: { dateKey: string; amount: number } };
-
-    let dayRhythm: DayRhythm;
-    if (pairs.length === 0) {
-      dayRhythm = { kind: "unavailable" };
-    } else if (maxSpend <= 0) {
-      dayRhythm = { kind: "no-expenses" };
-    } else if (minSpend === maxSpend) {
-      dayRhythm = { kind: "flat", amount: minSpend };
-    } else {
-      const best = pairs.reduce((a, b) => (b[1] < a[1] ? b : a));
-      const worst = pairs.reduce((a, b) => (b[1] > a[1] ? b : a));
-      dayRhythm = {
-        kind: "compare",
-        lightest: { dateKey: best[0], amount: best[1] },
-        heaviest: { dateKey: worst[0], amount: worst[1] },
-      };
-    }
-
-    return {
-      weekRange,
-      spent: thisTotals.spent,
-      income: thisTotals.income,
-      topCategory: thisTopCategory ? { name: thisTopCategory[0], amount: thisTopCategory[1] } : null,
-      daysLeftWeek,
-      safePerDay,
-      paceUnavailable,
-      weekClosing,
-      runwayTotal,
-      dayRhythm,
-    };
-  }, [transactions, budgetSnapshot.daysLeftInWeek, safePerDay]);
   useEffect(() => {
     setMonthlyRealDraft(String(Number.isFinite(monthlyRealBalance) ? Number(monthlyRealBalance.toFixed(2)) : 0));
   }, [monthlyRealBalance]);
@@ -1438,6 +1488,10 @@ function App() {
       bits.push("streak: log a transaction or routine touch before midnight to keep the chain.");
     }
 
+    if (coachMemoryHighlights[0]) {
+      bits.push(`coach memory: ${coachMemoryHighlights[0].summary.toLowerCase()}`);
+    }
+
     bits.push("Say what you want — I'll run changes when you ask.");
     return bits.join(" ");
   }, [
@@ -1456,6 +1510,7 @@ function App() {
     sortedTimelineEvents,
     weeklyDueBills.length,
     streakAtRisk,
+    coachMemoryHighlights,
   ]);
 
   const allowanceProgressTone = useMemo(() => {
@@ -1594,12 +1649,15 @@ function App() {
     const somalilandLine = fallbackHeadline
       ? "Somaliland is already moving this morning — stay informed, but keep your focus tight."
       : "Somaliland morning energy is calm right now — perfect time to make your first strong move.";
+    const memoryLine = coachMemoryHighlights[0]
+      ? `Coach memory: ${coachMemoryHighlights[0].summary}`
+      : "Coach memory is still learning from your transaction history.";
     const nudge = tasks.length === 0
       ? "One move: write one priority before 9am and finish it first."
       : "One move: finish your top task before you check socials again.";
-    const combined = `${greeting}, ${preferredName}. ${dayPart} is here — make it count. ${budgetLine} ${taskMealLine} ${timelineLine} ${somalilandLine} ${nudge}`;
+    const combined = `${greeting}, ${preferredName}. ${dayPart} is here — make it count. ${budgetLine} ${taskMealLine} ${timelineLine} ${somalilandLine} ${memoryLine} ${nudge}`;
     return combined.split(/\s+/).slice(0, 80).join(" ");
-  }, [settings?.profileName, currentHour, todayRemaining, tasks.length, doneTasks, mealStats.planned, mealStats.completed, timelineEvents.length, fallbackHeadline]);
+  }, [settings?.profileName, currentHour, todayRemaining, tasks.length, doneTasks, mealStats.planned, mealStats.completed, timelineEvents.length, fallbackHeadline, coachMemoryHighlights]);
   const refreshApp = async () => {
     if ("serviceWorker" in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -1917,13 +1975,39 @@ function App() {
     if (!question.trim() || !settings) return;
     const text = question.trim();
     const scenarioPreview = simulateWhatIfScenario(text, transactions, subscriptions, settings);
+    const affordabilityAssessment = assessAffordability({
+      question: text,
+      transactions,
+      subscriptions,
+      recurringIncome,
+      plannedCashflows,
+      settings,
+      activeGoal: activeSavingsGoal,
+      referenceDate: liveNow,
+    });
+    const matchedMoneyExplanation = matchMoneyExplanationQuestion(text, moneyMetricExplanations);
     const recentScenarioContext = whatIfScenarios
       .slice(0, 3)
       .map((s) => `${s.title}: month-end ${money(s.simulatedMonthEnd)} vs baseline ${money(s.currentMonthEnd)}.`)
       .join("\n");
+    const affordabilityContext = affordabilityAssessment
+      ? [
+        `Deterministic affordability check for ${money(affordabilityAssessment.amount)}:`,
+        `Short-term: ${affordabilityAssessment.shortTermVerdict}. ${affordabilityAssessment.shortTermReason}`,
+        `Today after purchase: ${money(affordabilityAssessment.todayAfterPurchase)} (safe now ${money(affordabilityAssessment.safeToday)}).`,
+        affordabilityAssessment.weekEndBalance != null ? `Week-end balance: ${money(affordabilityAssessment.weekEndBalance)}.` : null,
+        affordabilityAssessment.monthEndBalance != null ? `Month-end balance: ${money(affordabilityAssessment.monthEndBalance)}.` : null,
+        affordabilityAssessment.goal
+          ? `Goal impact: ${affordabilityAssessment.goal.title} ${affordabilityAssessment.goal.delayed ? `delays about ${affordabilityAssessment.goal.delayDays ?? 0} day(s)` : "stays on track"}.`
+          : null,
+      ].filter(Boolean).join("\n")
+      : "";
+    const explanationContext = matchedMoneyExplanation
+      ? `Deterministic explanation baseline:\n${matchedMoneyExplanation.summary}\n${matchedMoneyExplanation.bullets.map((line) => `- ${line}`).join("\n")}`
+      : "";
     const enrichedQuestion = scenarioPreview
-      ? `${text}\n\nWhat-if simulator baseline:\n${scenarioPreview.baseline.changes.join("\n")}\nProjected month-end: ${money(scenarioPreview.baseline.simulatedMonthEnd)} (current path ${money(scenarioPreview.baseline.currentMonthEnd)}).\n${recentScenarioContext ? `\nRecent scenarios:\n${recentScenarioContext}` : ""}`
-      : `${text}${recentScenarioContext ? `\n\nRecent scenarios:\n${recentScenarioContext}` : ""}`;
+      ? `${text}\n\nWhat-if simulator baseline:\n${scenarioPreview.baseline.changes.join("\n")}\nProjected month-end: ${money(scenarioPreview.baseline.simulatedMonthEnd)} (current path ${money(scenarioPreview.baseline.currentMonthEnd)}).${recentScenarioContext ? `\n\nRecent scenarios:\n${recentScenarioContext}` : ""}${affordabilityContext ? `\n\n${affordabilityContext}` : ""}${explanationContext ? `\n\n${explanationContext}` : ""}`
+      : `${text}${recentScenarioContext ? `\n\nRecent scenarios:\n${recentScenarioContext}` : ""}${affordabilityContext ? `\n\n${affordabilityContext}` : ""}${explanationContext ? `\n\n${explanationContext}` : ""}`;
     if (scenarioPreview) {
       setWhatIfScenarios((prev) => [
         {
@@ -2025,6 +2109,62 @@ function App() {
             category: expense.category,
           })),
         },
+        savingsGoalSummary: savingsGoalPlanner
+          ? {
+            goal: {
+              title: savingsGoalPlanner.goal.title,
+              targetAmount: savingsGoalPlanner.goal.targetAmount,
+              targetDate: savingsGoalPlanner.goal.targetDate,
+            },
+            requiredMonthly: savingsGoalPlanner.requiredMonthly,
+            projectedNaturalSavings: savingsGoalPlanner.projectedNaturalSavings,
+            plans: savingsGoalPlanner.plans.map((plan) => ({
+              kind: plan.kind,
+              label: plan.label,
+              monthlyContribution: plan.monthlyContribution,
+              projectedSaved: plan.projectedSaved,
+              remainingGap: plan.remainingGap,
+              hitsGoal: plan.hitsGoal,
+              bufferRisk: plan.bufferRisk,
+              confidence: plan.confidence,
+            })),
+          }
+          : { goal: null },
+        metricExplanationSummary: moneyMetricExplanations.map((item) => ({
+          id: item.id,
+          title: item.title,
+          summary: item.summary,
+          bullets: item.bullets,
+        })),
+        coachMemorySummary: coachMemories.map((memory) => ({
+          kind: memory.kind,
+          title: memory.title,
+          summary: memory.summary,
+          confidence: memory.confidence,
+          evidence: memory.evidence,
+        })),
+        dailyNoteSummary: recentAiVisibleNotes.map((note) => ({
+          date: note.date,
+          title: note.title,
+          body: note.body,
+          tags: note.tags,
+          aiVisible: note.aiVisible,
+          updatedAt: note.updatedAt,
+        })),
+        decisionSummary: affordabilityAssessment
+          ? {
+            amount: affordabilityAssessment.amount,
+            shortTermVerdict: affordabilityAssessment.shortTermVerdict,
+            shortTermReason: affordabilityAssessment.shortTermReason,
+            safeToday: affordabilityAssessment.safeToday,
+            todayAfterPurchase: affordabilityAssessment.todayAfterPurchase,
+            weekEndBalance: affordabilityAssessment.weekEndBalance,
+            monthEndBalance: affordabilityAssessment.monthEndBalance,
+            createsRiskDay: affordabilityAssessment.createsRiskDay,
+            nextRiskDate: affordabilityAssessment.nextRiskDate,
+            goal: affordabilityAssessment.goal,
+          }
+          : undefined,
         financeSnapshot: {
           monthlySalary,
           currentBalance: realBalance,
@@ -2107,6 +2247,7 @@ function App() {
       const fullRaw = streamedAnswer.trim() || answer;
       const { visible: prose, actionsJson } = stripActionMarkers(fullRaw);
       let automationFooter = "";
+      let decisionFooter = "";
       if (actionsJson) {
         try {
           const payload = JSON.parse(sanitizeActionsMarkerBody(actionsJson)) as unknown;
@@ -2120,6 +2261,7 @@ function App() {
             addSubscription,
             addRecurringIncome,
             addPlannedCashflow,
+            addSavingsGoal,
             updateSettings,
             reloadPlanAhead: async () => {
               const rows = await db.table("routinePlans").toArray();
@@ -2132,7 +2274,21 @@ function App() {
           automationFooter = `\n\nWarning: actions could not run (${err instanceof Error ? err.message : "invalid JSON"}).`;
         }
       }
-      let combined = `${prose}${automationFooter}`;
+      if (affordabilityAssessment) {
+        const decisionLines = [
+          `Short-term: ${affordabilityAssessment.shortTermVerdict === "yes" ? "yes" : affordabilityAssessment.shortTermVerdict === "tight" ? "tight" : "not safely"}.`,
+          `Today after purchase: ${money(affordabilityAssessment.todayAfterPurchase)}.`,
+          affordabilityAssessment.weekEndBalance != null ? `Week-end: ${money(affordabilityAssessment.weekEndBalance)}.` : null,
+          affordabilityAssessment.monthEndBalance != null ? `Month-end: ${money(affordabilityAssessment.monthEndBalance)}.` : null,
+          affordabilityAssessment.goal
+            ? `Goal: ${affordabilityAssessment.goal.delayed ? `delays ${affordabilityAssessment.goal.title} by about ${affordabilityAssessment.goal.delayDays ?? 0} day(s)` : `${affordabilityAssessment.goal.title} stays on pace`}.`
+            : null,
+        ].filter(Boolean);
+        if (decisionLines.length > 0) {
+          decisionFooter = `\n\nDecision check:\n- ${decisionLines.join("\n- ")}`;
+        }
+      }
+      let combined = `${prose}${decisionFooter}${automationFooter}`;
       if (actionNotes.length > 0) {
         combined = `${combined}\n\nOther actions:\n- ${actionNotes.join("\n- ")}`;
       }
@@ -2147,7 +2303,18 @@ function App() {
         return [...copy, { role: "assistant", text: combined }];
       });
     } catch (error) {
-      const fallback = askFinanceAssistant(text, transactions, subscriptions, settings, forecastData);
+      const fallback = askFinanceAssistant(
+        text,
+        transactions,
+        subscriptions,
+        recurringIncome,
+        plannedCashflows,
+        settings,
+        forecastData,
+        activeSavingsGoal,
+        coachMemories,
+        dailyContextNotes,
+      );
       setAssistantEngine("fallback");
       setAssistantEngineReason(error instanceof Error ? error.message : "Unknown Groq error");
       setChat((c) => [...c, { role: "assistant", text: fallback }]);
@@ -2178,6 +2345,43 @@ function App() {
     setPlannedCashflowDraft(createEmptyPlannedCashflowDraft());
     setPlannedCashflowDraftError("");
   }, []);
+
+  const toggleMoneyExplanation = useCallback((id: MoneyMetricExplanationId) => {
+    setActiveMoneyExplanation((prev) => (prev === id ? null : id));
+  }, []);
+
+  const saveDailyContextNote = useCallback(async () => {
+    const title = dailyContextNoteDraft.title.trim().slice(0, 120);
+    const body = dailyContextNoteDraft.body.trim().slice(0, 1200);
+    const tags = dailyContextNoteDraft.tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    if (!title && !body) {
+      setDailyContextNoteStatus("Write a quick note first.");
+      return;
+    }
+    await upsertDailyContextNote({
+      date: todayIso,
+      title,
+      body,
+      tags,
+      aiVisible: dailyContextNoteDraft.aiVisible,
+    });
+    setDailyContextNoteStatus(dailyContextNoteDraft.aiVisible ? "Saved for Coach Zero." : "Saved privately for today.");
+  }, [dailyContextNoteDraft, todayIso, upsertDailyContextNote]);
+
+  const clearDailyContextNote = useCallback(async () => {
+    if (!todayContextNote?.id) {
+      setDailyContextNoteDraft(createEmptyDailyContextNoteDraft());
+      setDailyContextNoteStatus("");
+      return;
+    }
+    await deleteDailyContextNote(todayContextNote.id);
+    setDailyContextNoteDraft(createEmptyDailyContextNoteDraft());
+    setDailyContextNoteStatus("Today's note cleared.");
+  }, [todayContextNote, deleteDailyContextNote]);
 
   const saveIncomeDraft = useCallback(async () => {
     const name = incomeDraft.name.trim();
@@ -2588,6 +2792,187 @@ function App() {
             </section>
 
             <div className="home-section-head">
+              <h3>Coach memory</h3>
+              <p className="muted">Learns your real money habits</p>
+            </div>
+            <section className="card coach-memory-card">
+              {coachMemoryHighlights.length > 0 ? (
+                <>
+                  {coachMemoryHighlights.map((memory) => (
+                    <article key={memory.kind} className="coach-memory-item">
+                      <div className="coach-memory-head">
+                        <div>
+                          <p className="coach-memory-kicker">{memory.title}</p>
+                          <strong>{memory.summary}</strong>
+                        </div>
+                        <span className="coach-memory-confidence">{memory.confidence}% match</span>
+                      </div>
+                      <div className="coach-memory-evidence">
+                        {memory.evidence.slice(0, 2).map((line) => (
+                          <p key={line} className="muted">- {line}</p>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </>
+              ) : (
+                <p className="muted">Add a bit more transaction history and Coach Zero will start remembering your spending rhythm automatically.</p>
+              )}
+            </section>
+
+            <section className="card daily-context-note-card">
+              <div className="daily-context-note-top">
+                <div className="daily-context-note-top-copy">
+                  <p className="daily-context-note-kicker">Daily memory</p>
+                  <h3>Today note</h3>
+                  <p className="muted">{todayNotePreview}</p>
+                </div>
+                <div className="daily-context-note-top-actions">
+                  <span className="badge">{dailyContextNotes.length} note{dailyContextNotes.length === 1 ? "" : "s"}</span>
+                  <button
+                    type="button"
+                    className="daily-context-note-collapse-btn"
+                    aria-expanded={todayNoteExpanded}
+                    aria-label={todayNoteExpanded ? "Collapse Today note" : "Expand Today note"}
+                    onClick={() => setTodayNoteExpanded((v) => !v)}
+                  >
+                    <span className="regional-brief-chevron" />
+                  </button>
+                </div>
+              </div>
+              <div className={`daily-context-note-panel ${todayNoteExpanded ? "is-expanded" : "is-collapsed"}`} aria-hidden={!todayNoteExpanded}>
+                <div className="daily-context-note-summary">
+                  <div className="daily-context-note-summary-copy">
+                    <p className="daily-context-note-date">{format(parseISO(todayIso), "EEEE, MMM d")}</p>
+                    <strong>{todayContextNote?.title?.trim() || "Capture what happened, why it mattered, and what to remember next."}</strong>
+                    <p className="muted">Add spending, plans, subscriptions, or routine context if it matters today.</p>
+                  </div>
+                  <div className="daily-context-note-summary-pills">
+                    <span className={`daily-context-note-ai-pill ${dailyContextNoteDraft.aiVisible ? "on" : "off"}`}>
+                      {dailyContextNoteDraft.aiVisible ? "AI on" : "Private"}
+                    </span>
+                    <span className="badge">{recentAiVisibleNotes.length} AI-visible</span>
+                  </div>
+                </div>
+
+                <div className="daily-context-note-compose">
+                  <div className="daily-context-note-example">
+                    <span className="daily-context-note-example-label">Example</span>
+                    <p className="muted">Ate out because I missed meal prep, spent more than planned, need to prep lunch tonight.</p>
+                  </div>
+                  <div className="daily-context-note-grid">
+                    <label>
+                      Title
+                      <input
+                        value={dailyContextNoteDraft.title}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setDailyContextNoteDraft((prev) => ({ ...prev, title: value }));
+                          setDailyContextNoteStatus("");
+                        }}
+                        placeholder="Optional title"
+                        maxLength={120}
+                      />
+                    </label>
+                    <label>
+                      Tags
+                      <input
+                        value={dailyContextNoteDraft.tags}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setDailyContextNoteDraft((prev) => ({ ...prev, tags: value }));
+                          setDailyContextNoteStatus("");
+                        }}
+                        placeholder="spending, subscriptions, routine"
+                      />
+                    </label>
+                  </div>
+                  <label className="daily-context-note-field-body">
+                    Quick note
+                    <textarea
+                      rows={5}
+                      value={dailyContextNoteDraft.body}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDailyContextNoteDraft((prev) => ({ ...prev, body: value }));
+                        setDailyContextNoteStatus("");
+                      }}
+                      placeholder="What happened today, why it happened, and what should you remember next?"
+                      maxLength={1200}
+                    />
+                  </label>
+                  <label className="daily-context-note-toggle">
+                    <input
+                      type="checkbox"
+                      checked={dailyContextNoteDraft.aiVisible}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setDailyContextNoteDraft((prev) => ({ ...prev, aiVisible: checked }));
+                        setDailyContextNoteStatus("");
+                      }}
+                    />
+                    <span>Let AI use this note later for smarter help</span>
+                  </label>
+                  <div className="daily-context-note-actions">
+                    <button type="button" onClick={() => { void saveDailyContextNote(); }}>
+                      Save note
+                    </button>
+                    <button type="button" className="ghost-btn" onClick={() => { void clearDailyContextNote(); }}>
+                      Clear
+                    </button>
+                  </div>
+                  <div className="daily-context-note-footer">
+                    <span className="muted">
+                      {dailyContextNoteStatus
+                        || (todayContextNote
+                          ? `Last saved ${formatDistanceToNow(new Date(todayContextNote.updatedAt), { addSuffix: true })}`
+                          : "No note saved yet")}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="daily-context-note-history">
+                  <div className="daily-context-note-history-head">
+                    <div>
+                      <p className="daily-context-note-kicker">Recent notes</p>
+                      <strong>Your notes</strong>
+                    </div>
+                    <span className="badge">{dailyContextNotes.length}</span>
+                  </div>
+                  {recentDailyContextNotes.length > 0 ? (
+                    <div className="daily-context-note-history-list">
+                      {recentDailyContextNotes.map((note) => (
+                        <article
+                          key={note.id ?? `${note.date}-${note.updatedAt}`}
+                          className={`daily-context-note-item${note.date === todayIso ? " is-today" : ""}`}
+                        >
+                          <div className="daily-context-note-item-head">
+                            <div>
+                              <strong>{note.title.trim() || format(parseISO(note.date), "EEE, MMM d")}</strong>
+                              <p className="muted">
+                                {format(parseISO(note.date), "EEE, MMM d")}
+                                {note.aiVisible ? " · AI visible" : " · Private"}
+                              </p>
+                            </div>
+                            {note.date === todayIso && <span className="badge">Today</span>}
+                          </div>
+                          {note.tags.length > 0 && (
+                            <div className="daily-context-note-tags">
+                              {note.tags.slice(0, 4).map((tag) => <span key={`${note.date}-${tag}`}>{tag}</span>)}
+                            </div>
+                          )}
+                          <p className="daily-context-note-item-body">{note.body || "No details added."}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No notes yet. Save one here and it will show up in your history.</p>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <div className="home-section-head">
               <h3>Top numbers</h3>
               <p className="muted">Updated with every transaction</p>
             </div>
@@ -2717,13 +3102,25 @@ function App() {
             </div>
             <section className="card daily-goal-card">
               <article className="card daily-allowance-main">
-                <p className="muted">Money left today</p>
+                <div className="metric-label-row">
+                  <p className="muted">Money left today</p>
+                  <button
+                    type="button"
+                    className="why-pill-btn"
+                    onClick={() => toggleMoneyExplanation("daily_safe_to_spend")}
+                  >
+                    Why?
+                  </button>
+                </div>
                 <h3>{money(Math.max(0, todayRemaining))}</h3>
                 <p className="muted">of {money(safePerDay)} daily allowance</p>
                 <div className="daily-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={allowanceProgressPct}>
                   <div className={`daily-progress-fill ${allowanceProgressTone}`} style={{ width: `${allowanceProgressPct}%` }} />
                 </div>
               </article>
+              {activeMoneyExplanationCard?.id === "daily_safe_to_spend" ? (
+                <MoneyExplanationCard explanation={activeMoneyExplanationCard} />
+              ) : null}
               <article className="card daily-allowance-status">
                 <p>{dailyAllowanceStatusText}</p>
               </article>
@@ -2765,171 +3162,97 @@ function App() {
                 </article>
               )}
             </section>
-            <section
-              className={`card money-this-week-simple money-this-week-card${moneyThisWeekExpanded ? "" : " money-this-week-card--collapsed"}`}
-              aria-labelledby="money-this-week-heading"
-            >
+            <section className="card cashflow-outlook-card" aria-labelledby="cashflow-outlook-heading">
               <div className="row regional-brief-top">
                 <div className="regional-brief-title-row">
                   <button
                     type="button"
                     className="regional-brief-collapse-btn"
-                    aria-expanded={moneyThisWeekExpanded}
-                    aria-controls="money-this-week-body"
-                    aria-label={
-                      moneyThisWeekExpanded ? "Collapse Money this week" : "Expand Money this week"
-                    }
-                    onClick={() => setMoneyThisWeekExpanded((v) => !v)}
+                    aria-expanded={cashflowOutlookExpanded}
+                    aria-controls="cashflow-outlook-body"
+                    aria-label={cashflowOutlookExpanded ? "Collapse Cashflow outlook" : "Expand Cashflow outlook"}
+                    onClick={() => setCashflowOutlookExpanded((v) => !v)}
                   >
                     <span className="regional-brief-chevron" aria-hidden />
                   </button>
                   <div className="regional-brief-title-copy">
-                    <h3 id="money-this-week-heading" className="regional-brief-title-plain">
-                      Money this week
+                    <h3 id="cashflow-outlook-heading" className="regional-brief-title-plain">
+                      Cashflow outlook
                     </h3>
+                    <p className="muted">Next 30 days</p>
                   </div>
                 </div>
-                <p className="muted">{moneyThisWeek.weekRange}</p>
               </div>
               <div
-                id="money-this-week-body"
-                className={`money-this-week-body ${moneyThisWeekExpanded ? "is-expanded" : "is-collapsed"}`}
-                aria-hidden={!moneyThisWeekExpanded}
+                id="cashflow-outlook-body"
+                className={`cashflow-outlook-body ${cashflowOutlookExpanded ? "is-expanded" : "is-collapsed"}`}
+                aria-hidden={!cashflowOutlookExpanded}
               >
-                <div className="money-week-panel">
-                  <div className="money-week-kpis" aria-label="Week spending summary">
-                    <div className="money-week-kpi">
-                      <span className="money-week-kpi-label">Spent</span>
-                      <span className="money-week-kpi-value">{money(moneyThisWeek.spent)}</span>
-                    </div>
-                    <div className="money-week-kpi">
-                      <span className="money-week-kpi-label">Income</span>
-                      <span className="money-week-kpi-value">{money(moneyThisWeek.income)}</span>
-                    </div>
-                    {moneyThisWeek.topCategory ? (
-                      <div className="money-week-kpi money-week-kpi--span">
-                        <span className="money-week-kpi-label">Top category</span>
-                        <span className="money-week-kpi-value money-week-kpi-value--sm">{moneyThisWeek.topCategory.name}</span>
-                        <span className="money-week-kpi-note">{money(moneyThisWeek.topCategory.amount)}</span>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="money-week-runway-block">
-                    {moneyThisWeek.paceUnavailable ? (
-                      <p className="muted money-week-runway-text">
-                        Set balance and bills in Settings to estimate runway for the rest of this week.
-                      </p>
-                    ) : moneyThisWeek.weekClosing ? (
-                      <p className="money-week-runway-text">
-                        Week window closing — target near <strong>{money(moneyThisWeek.safePerDay)}</strong>/day into next week.
-                      </p>
-                    ) : (
-                      <p className="money-week-runway-text">
-                        About <strong>{money(moneyThisWeek.runwayTotal ?? 0)}</strong> headroom across{" "}
-                        <strong>{moneyThisWeek.daysLeftWeek}</strong> day(s) at ~<strong>{money(moneyThisWeek.safePerDay)}</strong>/day.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="money-week-rhythm">
-                    <p className="money-week-rhythm-title">Lightest vs heaviest day</p>
-                    {moneyThisWeek.dayRhythm.kind === "unavailable" ? (
-                      <p className="muted money-week-rhythm-muted">Day breakdown unavailable.</p>
-                    ) : moneyThisWeek.dayRhythm.kind === "no-expenses" ? (
-                      <p className="muted money-week-rhythm-muted">No expenses logged this week yet.</p>
-                    ) : moneyThisWeek.dayRhythm.kind === "flat" ? (
-                      <p className="muted money-week-rhythm-muted">
-                        Same pace each day (~{money(moneyThisWeek.dayRhythm.amount)}) — no standout yet.
-                      </p>
-                    ) : (
-                      <div className="money-week-rhythm-pair">
-                        <div className="money-week-chip money-week-chip--light">
-                          <span className="money-week-chip-label">Lightest</span>
-                          <span className="money-week-chip-day">{format(parseISO(moneyThisWeek.dayRhythm.lightest.dateKey), "EEE")}</span>
-                          <span className="money-week-chip-amt">{money(moneyThisWeek.dayRhythm.lightest.amount)}</span>
-                        </div>
-                        <div className="money-week-chip money-week-chip--heavy">
-                          <span className="money-week-chip-label">Heaviest</span>
-                          <span className="money-week-chip-day">{format(parseISO(moneyThisWeek.dayRhythm.heaviest.dateKey), "EEE")}</span>
-                          <span className="money-week-chip-amt">{money(moneyThisWeek.dayRhythm.heaviest.amount)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div className="home-section-head">
-              <h3>Cashflow outlook</h3>
-              <p className="muted">Next 30 days</p>
-            </div>
-            <section className="card cashflow-outlook-card">
               {cashflowForecast ? (
                 <>
                   <div className="cashflow-outlook-head">
-                    <div>
+                    <div className="cashflow-outlook-copy">
                       <p className="cashflow-kicker">Forecast 2.0</p>
-                      <p className="muted">
-                        Salary basis: {money(cashflowForecast.salaryContext.monthlySalary)} salary - {money(cashflowForecast.salaryContext.recurringSubscriptionsMonthly)} recurring subs
-                        {" "}= {money(cashflowForecast.salaryContext.salaryAfterSubscriptions)}/month before transaction pace.
+                      <div className="metric-value-row">
+                        <strong className={`cashflow-hero-amount ${cashflowForecast.lowestPoint && cashflowForecast.lowestPoint.balance < 0 ? "negative" : ""}`}>
+                          {money(cashflowForecast.lowestPoint?.balance ?? realBalance)}
+                        </strong>
+                        <button
+                          type="button"
+                          className="why-pill-btn"
+                          onClick={() => toggleMoneyExplanation("cashflow_lowest_point")}
+                        >
+                          Why?
+                        </button>
+                      </div>
+                      <p className="muted cashflow-hero-caption">
+                        {cashflowForecast.lowestPoint
+                          ? `Lowest likely balance by ${format(parseISO(cashflowForecast.lowestPoint.date), "EEE, MMM d")}`
+                          : "No projection yet"}
                       </p>
                     </div>
                     <span className={`cashflow-status-pill ${cashflowForecast.requiredCorrection ? "is-risk" : "is-safe"}`}>
                       {cashflowForecast.requiredCorrection ? "Needs correction" : "Stable"}
                     </span>
                   </div>
+                  {activeMoneyExplanationCard?.id === "cashflow_lowest_point" ? (
+                    <MoneyExplanationCard explanation={activeMoneyExplanationCard} />
+                  ) : null}
 
-                  <div className="snapshot-grid cashflow-summary-grid">
-                    <article>
-                      <p className="muted">Lowest likely point</p>
-                      <strong className={cashflowForecast.lowestPoint && cashflowForecast.lowestPoint.balance < 0 ? "negative" : ""}>
-                        {money(cashflowForecast.lowestPoint?.balance ?? realBalance)}
-                      </strong>
-                      <p className="muted">
-                        {cashflowForecast.lowestPoint ? format(parseISO(cashflowForecast.lowestPoint.date), "EEE, MMM d") : "No projection yet"}
-                      </p>
+                  <div className="cashflow-stat-grid">
+                    <article className="cashflow-stat-card">
+                      <p className="cashflow-stat-label">After subs</p>
+                      <strong>{money(cashflowForecast.salaryContext.salaryAfterSubscriptions)}</strong>
+                      <p className="muted">From {money(cashflowForecast.salaryContext.monthlySalary)} salary base per month.</p>
                     </article>
-                    <article>
-                      <p className="muted">Next payday</p>
-                      <strong className={cashflowForecast.checkpoints.nextPayday && cashflowForecast.checkpoints.nextPayday.likelyBalance < 0 ? "negative" : "positive"}>
-                        {cashflowForecast.checkpoints.nextPayday ? money(cashflowForecast.checkpoints.nextPayday.likelyBalance) : "None"}
-                      </strong>
-                      <p className="muted">
-                        {cashflowForecast.nextPayday ? `${cashflowForecast.nextPayday.label} · ${format(parseISO(cashflowForecast.nextPayday.date), "MMM d")}` : "Using salary fallback or add recurring income in Settings"}
-                      </p>
-                    </article>
-                    <article>
-                      <p className="muted">At current tx pace</p>
-                      <strong className={cashflowForecast.checkpoints.monthEnd && cashflowForecast.checkpoints.monthEnd.likelyBalance < 0 ? "negative" : ""}>
+                    <article className="cashflow-stat-card">
+                      <p className="cashflow-stat-label">Monthly runway</p>
+                      <strong className={cashflowForecast.salaryContext.monthlyNetAfterTransactions < 0 ? "negative" : ""}>
                         {money(cashflowForecast.salaryContext.monthlyNetAfterTransactions)}
                       </strong>
-                      <p className="muted">
-                        {money(cashflowForecast.salaryContext.monthlyObservedSpend)} actual transaction pace / month after fixed costs.
-                      </p>
+                      <p className="muted">{money(cashflowForecast.salaryContext.monthlyObservedSpend)} observed spend after fixed costs.</p>
                     </article>
-                  </div>
-
-                  <div className="snapshot-grid cashflow-summary-grid">
-                    <article>
-                      <p className="muted">Essential pace</p>
-                      <strong>{money(cashflowForecast.salaryContext.monthlyEssentialSpend)}</strong>
-                      <p className="muted">Observed from recurring/essential transaction categories.</p>
-                    </article>
-                    <article>
-                      <p className="muted">Flexible pace</p>
-                      <strong>{money(cashflowForecast.salaryContext.monthlyFlexibleSpend)}</strong>
-                      <p className="muted">Observed from food, shopping, eating out, and other adjustable spend.</p>
-                    </article>
-                    <article>
-                      <p className="muted">Risk threshold</p>
+                    <article className="cashflow-stat-card cashflow-stat-card--wide">
+                      <p className="cashflow-stat-label">Buffer</p>
                       <strong>{money(cashflowForecast.threshold)}</strong>
                       <p className="muted">
                         {cashflowForecast.nextRiskDay
                           ? `First likely risk ${format(parseISO(cashflowForecast.nextRiskDay.date), "MMM d")}`
                           : "No likely day below floor right now"}
                       </p>
+                    </article>
+                  </div>
+
+                  <div className="cashflow-spend-grid">
+                    <article className="cashflow-spend-card">
+                      <p className="cashflow-stat-label">Essential pace</p>
+                      <strong>{money(cashflowForecast.salaryContext.monthlyEssentialSpend)}</strong>
+                      <p className="muted">Observed from recurring/essential transaction categories.</p>
+                    </article>
+                    <article className="cashflow-spend-card">
+                      <p className="cashflow-stat-label">Flexible pace</p>
+                      <strong>{money(cashflowForecast.salaryContext.monthlyFlexibleSpend)}</strong>
+                      <p className="muted">Observed from food, shopping, eating out, and other adjustable spend.</p>
                     </article>
                   </div>
 
@@ -2947,37 +3270,47 @@ function App() {
                     <p className="muted cashflow-no-risk">Likely path stays above your {money(cashflowForecast.threshold)} buffer right now.</p>
                   )}
 
-                  <div className="cashflow-mini-days" aria-label="Projected balance by day">
-                    {cashflowForecast.points.slice(0, 8).map((point) => (
-                      <article key={point.date} className={`cashflow-mini-day ${point.belowThreshold ? "is-risk" : ""}`}>
-                        <span className="cashflow-mini-day-label">{format(parseISO(point.date), "EEE")}</span>
-                        <strong className={point.balance < 0 ? "negative" : ""}>{money(point.balance)}</strong>
-                        <span className="muted cashflow-mini-range">
-                          {money(point.bestBalance)} to {money(point.worstBalance)}
-                        </span>
-                      </article>
-                    ))}
+                  <div className="cashflow-section">
+                    <p className="cashflow-subtitle">Key checkpoints</p>
+                    <div className="cashflow-checkpoint-grid">
+                      {[cashflowForecast.checkpoints.nextPayday, cashflowForecast.checkpoints.monthEnd].filter(Boolean).map((checkpoint) => (
+                        <article key={checkpoint!.label} className="cashflow-checkpoint-card">
+                          <p className="cashflow-subtitle">{checkpoint!.label}</p>
+                          <p className="muted">
+                            {cashflowForecast.nextPayday && checkpoint!.label === cashflowForecast.nextPayday.label
+                              ? `${format(parseISO(checkpoint!.date), "EEEE, MMM d")} · ${cashflowForecast.nextPayday.label}`
+                              : format(parseISO(checkpoint!.date), "EEEE, MMM d")}
+                          </p>
+                          <div className="cashflow-scenario-row">
+                            <span>Best</span>
+                            <strong className="positive">{money(checkpoint!.bestBalance)}</strong>
+                          </div>
+                          <div className="cashflow-scenario-row">
+                            <span>Likely</span>
+                            <strong className={checkpoint!.likelyBalance < 0 ? "negative" : ""}>{money(checkpoint!.likelyBalance)}</strong>
+                          </div>
+                          <div className="cashflow-scenario-row">
+                            <span>Worst</span>
+                            <strong className={checkpoint!.worstBalance < 0 ? "negative" : ""}>{money(checkpoint!.worstBalance)}</strong>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="cashflow-checkpoint-grid">
-                    {[cashflowForecast.checkpoints.nextPayday, cashflowForecast.checkpoints.monthEnd].filter(Boolean).map((checkpoint) => (
-                      <article key={checkpoint!.label} className="cashflow-checkpoint-card">
-                        <p className="cashflow-subtitle">{checkpoint!.label}</p>
-                        <p className="muted">{format(parseISO(checkpoint!.date), "EEEE, MMM d")}</p>
-                        <div className="cashflow-scenario-row">
-                          <span>Best</span>
-                          <strong className="positive">{money(checkpoint!.bestBalance)}</strong>
-                        </div>
-                        <div className="cashflow-scenario-row">
-                          <span>Likely</span>
-                          <strong className={checkpoint!.likelyBalance < 0 ? "negative" : ""}>{money(checkpoint!.likelyBalance)}</strong>
-                        </div>
-                        <div className="cashflow-scenario-row">
-                          <span>Worst</span>
-                          <strong className={checkpoint!.worstBalance < 0 ? "negative" : ""}>{money(checkpoint!.worstBalance)}</strong>
-                        </div>
-                      </article>
-                    ))}
+                  <div className="cashflow-section">
+                    <p className="cashflow-subtitle">8-day path</p>
+                    <div className="cashflow-mini-days" aria-label="Projected balance by day">
+                      {cashflowForecast.points.slice(0, 8).map((point) => (
+                        <article key={point.date} className={`cashflow-mini-day ${point.belowThreshold ? "is-risk" : ""}`}>
+                          <span className="cashflow-mini-day-label">{format(parseISO(point.date), "EEE")}</span>
+                          <strong className={point.balance < 0 ? "negative" : ""}>{money(point.balance)}</strong>
+                          <span className="muted cashflow-mini-range">
+                            {money(point.bestBalance)} to {money(point.worstBalance)}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
                   </div>
 
                   {cashflowForecast.categoryTrends.length > 0 ? (
@@ -3057,6 +3390,7 @@ function App() {
               ) : (
                 <p className="muted">Set your balance first, then add paydays or planned cash items in Settings to build the projection.</p>
               )}
+              </div>
             </section>
 
             <div className="home-section-head">
@@ -4574,6 +4908,24 @@ function ReminderSheet({
         <div className="row"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>
       </motion.form>
     </motion.div>
+  );
+}
+
+function MoneyExplanationCard({ explanation }: { explanation: MoneyMetricExplanation }) {
+  return (
+    <article className="card money-explanation-card" role="note" aria-label={explanation.title}>
+      <div className="money-explanation-head">
+        <strong>{explanation.title}</strong>
+      </div>
+      <p className="muted">{explanation.summary}</p>
+      <div className="money-explanation-list">
+        {explanation.bullets.map((bullet) => (
+          <p key={bullet} className="muted">
+            {bullet}
+          </p>
+        ))}
+      </div>
+    </article>
   );
 }
 
