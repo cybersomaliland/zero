@@ -25,6 +25,11 @@ const X_QUERY_VARIANTS = [
   "Somaliland sports OR Somaliland culture OR Somaliland education OR Somaliland health",
   "Hargeisa traffic OR Berbera port OR Somaliland airlines OR Somaliland election",
 ];
+const GOOGLE_NEWS_QUERY_VARIANTS = [
+  "Somaliland OR Hargeisa OR Berbera OR Borama",
+  "Somaliland politics OR Somaliland economy OR Somaliland business",
+  "Somaliland sports OR Somaliland culture OR Somaliland education",
+];
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:zero@example.com";
@@ -57,30 +62,36 @@ if (WEB_PUSH_ENABLED) {
 function decodeXmlEntities(input) {
   return String(input)
     .replaceAll("&amp;", "&")
+    .replaceAll("&nbsp;", " ")
     .replaceAll("&quot;", "\"")
     .replaceAll("&#39;", "'")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">");
 }
 
+function stripHtmlTags(input) {
+  return String(input).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function extractTag(itemXml, tag) {
-  const match = itemXml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  const match = itemXml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
   if (!match) return "";
   return decodeXmlEntities(match[1]).trim();
 }
 
-function parseRssItems(xml) {
+function parseRssItems(xml, fallbackSource = "Feed") {
   const chunks = String(xml).match(/<item>([\s\S]*?)<\/item>/gi) || [];
   return chunks.map((chunk) => {
     const title = extractTag(chunk, "title");
     const url = extractTag(chunk, "link");
     const description = extractTag(chunk, "description");
     const publishedAt = extractTag(chunk, "pubDate");
+    const source = extractTag(chunk, "source");
     return {
       title: title || "X post",
-      description: description || "No summary available.",
+      description: stripHtmlTags(description) || "No summary available.",
       url,
-      source: "X (Twitter)",
+      source: source || fallbackSource,
       publishedAt,
     };
   }).filter((item) => item.url);
@@ -142,14 +153,42 @@ async function fetchXBriefItems(queries) {
   return sortNewsByRecency(dedupeNews(relevant.length > 0 ? relevant : collected));
 }
 
+async function fetchGoogleNewsItems(queries) {
+  const collected = [];
+  for (const query of queries) {
+    try {
+      const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+      const response = await fetch(rssUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 ZeroApp/1.0" },
+      });
+      if (!response.ok) continue;
+      const xml = await response.text();
+      const items = parseRssItems(xml, "Google News");
+      const topical = items.filter(isSomalilandRelevant);
+      collected.push(...(topical.length > 0 ? topical : items));
+      if (collected.length >= 12) break;
+    } catch {
+      // continue with next query
+    }
+  }
+  return sortNewsByRecency(dedupeNews(collected));
+}
+
+async function fetchSomalilandRecentItems() {
+  const xItems = await fetchXBriefItems(X_QUERY_VARIANTS);
+  if (xItems.length >= 6) return xItems;
+  const googleItems = await fetchGoogleNewsItems(GOOGLE_NEWS_QUERY_VARIANTS);
+  return sortNewsByRecency(dedupeNews([...xItems, ...googleItems]));
+}
+
 app.get("/api/x-brief", async (req, res) => {
-  const items = await fetchXBriefItems(X_QUERY_VARIANTS);
+  const items = await fetchSomalilandRecentItems();
   return res.status(200).json({ items: items.slice(0, 10) });
 });
 
 app.get("/api/news-brief", async (req, res) => {
   try {
-    const items = sortNewsByRecency(dedupeNews(await fetchXBriefItems(X_QUERY_VARIANTS)));
+    const items = await fetchSomalilandRecentItems();
     return res.status(200).json({ items: items.slice(0, 10) });
   } catch {
     return res.status(200).json({ items: [] });

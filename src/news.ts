@@ -10,7 +10,8 @@ const SOMALILAND_TERMS = ["somaliland", "hargeisa", "berbera", "borama", "burao"
 
 function normalizeDescription(value: unknown) {
   if (typeof value !== "string") return "No summary available.";
-  return value.trim() || "No summary available.";
+  const clean = value.replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return clean || "No summary available.";
 }
 
 function isSomalilandRelevant(item: { title: string; description: string; source: string }) {

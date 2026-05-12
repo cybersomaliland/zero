@@ -834,7 +834,7 @@ function App() {
           setNewsItems([]);
           setNewsError(
             import.meta.env.DEV
-              ? "Somaliland X updates need the API server. Run npm run start (port 3000) while vite dev runs."
+              ? "Somaliland updates need the local API. Run npm run dev after restarting so both the app and API are up."
               : "Couldn't load Somaliland updates.",
           );
         })
@@ -2738,7 +2738,7 @@ function App() {
 
                 <div className="regional-brief-panel regional-brief-panel--news">
                   <div className="regional-panel-head">
-                    <span className="regional-panel-kicker">Recent on X</span>
+                    <span className="regional-panel-kicker">Recent updates</span>
                   </div>
                   {!newsLoading && newsItems.length === 0 && !newsError && (
                     <p className="muted">Tap Refresh for recent Somaliland posts.</p>
@@ -4409,7 +4409,7 @@ function App() {
                 </div>
                 <div className="morning-news">
                   <div className="row">
-                    <h4>Recent Somaliland on X</h4>
+                    <h4>Recent Somaliland updates</h4>
                     <button type="button" className="ghost-btn" onClick={() => { void refreshRegionalBrief(); }}>Refresh</button>
                   </div>
                   {!newsLoading && recentNewsItems.length > 0 && (
