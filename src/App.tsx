@@ -3398,100 +3398,6 @@ function App() {
               )}
             </section>
 
-            <section className="card routine-card routine-card-notes ios-notes-card">
-              <p className="routine-section-kicker">NOTES</p>
-              <div className="ios-notes-title-block">
-                <h3 className="ios-notes-title">Today</h3>
-                <p className="muted ios-notes-subtitle">{format(parseISO(todayIso), "EEEE, MMM d")}</p>
-              </div>
-
-              <div className="ios-notes-compose-shell">
-                <textarea
-                  className="routine-notes-textarea ios-notes-textarea"
-                  rows={4}
-                  value={dailyContextNoteDraft.body}
-                  onChange={(e) => {
-                    setDailyContextNoteDraft((prev) => ({ ...prev, body: e.target.value }));
-                    setDailyContextNoteStatus("");
-                  }}
-                  placeholder="Anything worth remembering about today…"
-                  maxLength={1200}
-                />
-                <div className="ios-notes-sep" aria-hidden />
-                <label className="ios-notes-toggle-row">
-                  <span className="ios-notes-toggle-label">Share with Coach Zero</span>
-                  <input
-                    type="checkbox"
-                    className="ios-notes-toggle-input"
-                    checked={dailyContextNoteDraft.aiVisible}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setDailyContextNoteDraft((prev) => ({ ...prev, aiVisible: checked }));
-                      setDailyContextNoteStatus("");
-                    }}
-                  />
-                </label>
-              </div>
-
-              <div className="ios-notes-actions-row">
-                <button type="button" className="ios-notes-btn-primary" onClick={() => { void saveDailyContextNote(); }}>
-                  Save
-                </button>
-                <button type="button" className="ios-notes-btn-secondary ghost-btn" onClick={() => resetDailyContextDraft()}>
-                  Reset
-                </button>
-              </div>
-              <p className="muted routine-notes-status ios-notes-save-status">
-                {dailyContextNoteStatus
-                  || (todayContextNote
-                    ? `Saved ${formatDistanceToNow(new Date(todayContextNote.updatedAt), { addSuffix: true })}`
-                    : "")}
-              </p>
-
-              {recentDailyContextNotes.length > 0 && (
-                <div className="ios-notes-recent-wrap">
-                  <p className="ios-notes-section-label">Recent</p>
-                  <div className="ios-notes-inset-list" role="list">
-                    {recentDailyContextNotes.map((note) => {
-                      const preview = (note.body || note.title || "").trim();
-                      const short =
-                        preview.length > 64 ? `${preview.slice(0, 64).trim()}…` : preview || "—";
-                      const label =
-                        note.date === todayIso
-                          ? "Today’s note"
-                          : `Note from ${format(parseISO(note.date), "MMMM d, yyyy")}`;
-                      return (
-                        <button
-                          key={note.id ?? `${note.date}-${note.updatedAt}`}
-                          type="button"
-                          className="ios-notes-row"
-                          role="listitem"
-                          aria-label={`Read ${label}`}
-                          onClick={() => setReadingContextNote(note)}
-                        >
-                          <div className="ios-notes-row-text">
-                            <span className="ios-notes-row-date">
-                              {note.date === todayIso ? "Today" : format(parseISO(note.date), "MMM d")}
-                            </span>
-                            <span className="ios-notes-row-preview">{short}</span>
-                          </div>
-                          <svg className="ios-notes-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <path
-                              d="M9.5 7.5L14.5 12l-5 4.5"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </section>
-
             <section className="card routine-card routine-card-timeline routine-card-timeline-ios">
               <p className="routine-section-kicker">TIMELINE</p>
               <IosDayTimeline
@@ -3700,6 +3606,100 @@ function App() {
                 <div className="routine-celebration checklist-board-celebration">
                   <h4>Checklist clear</h4>
                   <p>You closed every item today — carry that momentum into tomorrow&apos;s first block.</p>
+                </div>
+              )}
+            </section>
+
+            <section className="card routine-card routine-card-notes ios-notes-card">
+              <p className="routine-section-kicker">NOTES</p>
+              <div className="ios-notes-title-block">
+                <h3 className="ios-notes-title">Today</h3>
+                <p className="muted ios-notes-subtitle">{format(parseISO(todayIso), "EEEE, MMM d")}</p>
+              </div>
+
+              <div className="ios-notes-compose-shell">
+                <textarea
+                  className="routine-notes-textarea ios-notes-textarea"
+                  rows={4}
+                  value={dailyContextNoteDraft.body}
+                  onChange={(e) => {
+                    setDailyContextNoteDraft((prev) => ({ ...prev, body: e.target.value }));
+                    setDailyContextNoteStatus("");
+                  }}
+                  placeholder="Anything worth remembering about today…"
+                  maxLength={1200}
+                />
+                <div className="ios-notes-sep" aria-hidden />
+                <label className="ios-notes-toggle-row">
+                  <span className="ios-notes-toggle-label">Share with Coach Zero</span>
+                  <input
+                    type="checkbox"
+                    className="ios-notes-toggle-input"
+                    checked={dailyContextNoteDraft.aiVisible}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setDailyContextNoteDraft((prev) => ({ ...prev, aiVisible: checked }));
+                      setDailyContextNoteStatus("");
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="ios-notes-actions-row">
+                <button type="button" className="ios-notes-btn-primary" onClick={() => { void saveDailyContextNote(); }}>
+                  Save
+                </button>
+                <button type="button" className="ios-notes-btn-secondary ghost-btn" onClick={() => resetDailyContextDraft()}>
+                  Reset
+                </button>
+              </div>
+              <p className="muted routine-notes-status ios-notes-save-status">
+                {dailyContextNoteStatus
+                  || (todayContextNote
+                    ? `Saved ${formatDistanceToNow(new Date(todayContextNote.updatedAt), { addSuffix: true })}`
+                    : "")}
+              </p>
+
+              {recentDailyContextNotes.length > 0 && (
+                <div className="ios-notes-recent-wrap">
+                  <p className="ios-notes-section-label">Recent</p>
+                  <div className="ios-notes-inset-list" role="list">
+                    {recentDailyContextNotes.map((note) => {
+                      const preview = (note.body || note.title || "").trim();
+                      const short =
+                        preview.length > 64 ? `${preview.slice(0, 64).trim()}…` : preview || "—";
+                      const label =
+                        note.date === todayIso
+                          ? "Today’s note"
+                          : `Note from ${format(parseISO(note.date), "MMMM d, yyyy")}`;
+                      return (
+                        <button
+                          key={note.id ?? `${note.date}-${note.updatedAt}`}
+                          type="button"
+                          className="ios-notes-row"
+                          role="listitem"
+                          aria-label={`Read ${label}`}
+                          onClick={() => setReadingContextNote(note)}
+                        >
+                          <div className="ios-notes-row-text">
+                            <span className="ios-notes-row-date">
+                              {note.date === todayIso ? "Today" : format(parseISO(note.date), "MMM d")}
+                            </span>
+                            <span className="ios-notes-row-preview">{short}</span>
+                          </div>
+                          <svg className="ios-notes-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path
+                              d="M9.5 7.5L14.5 12l-5 4.5"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </section>
