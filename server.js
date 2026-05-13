@@ -9,6 +9,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+// When spawned by dev tooling (e.g. concurrently on Windows), stdin may be a closed pipe.
+// Node can treat that as "no work left" once http.Server requests finish — keep stdin referenced.
+if (process.stdin.isTTY !== true && typeof process.stdin.resume === "function") {
+  try {
+    process.stdin.resume();
+  } catch {
+    // ignore
+  }
+}
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.1-8b-instant";
 const NITTER_RSS_SOURCES = [
