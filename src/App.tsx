@@ -41,6 +41,7 @@ import {
 } from "./webauthnLock";
 import { PUSH_NOTIFICATION_KIND_META } from "./pushNotificationCopy";
 import type {
+  DailyContextNote,
   PlannedCashflowItem,
   PlannedCashflowKind,
   PushNotificationKind,
@@ -55,6 +56,13 @@ import type {
 const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 /** When returning to the tab/window, refresh if last sync is older than this. */
 const WEATHER_STALE_AFTER_MS = 5 * 60 * 1000;
+const PLAN_MY_DAY_PROMPT = [
+  "Plan my day and apply it to my Routine.",
+  "Use my current money, bills, safe-to-spend amount, routine blocks, checklist, reminders, and shared daily notes.",
+  "Use context.meta.today as the yyyy-MM-dd date. If today's timeline already has intentional blocks, preserve them and fill the gaps; if it is empty, create a realistic timeline.",
+  "Use Coach Zero actions: emit ZERO_ACTIONS with set_day_timeline for the final timeline and add 2-4 high-priority tasks only when useful.",
+  "Keep the visible reply short: the day theme, the money guardrail, and the first next move. Do not add transactions, subscriptions, income, or savings goals unless I explicitly ask.",
+].join("\n");
 
 const tabs = ["Home", "Transactions", "Subscriptions", "Insights", "Settings"] as const;
 type Tab = (typeof tabs)[number];
@@ -210,6 +218,19 @@ function createEmptyDailyContextNoteDraft(): DailyContextNoteDraft {
   };
 }
 
+function draftFromDailyContextNote(note: DailyContextNote | null): DailyContextNoteDraft {
+  if (!note) return createEmptyDailyContextNoteDraft();
+  const t = note.title?.trim() ?? "";
+  const b = note.body?.trim() ?? "";
+  const merged = t && b ? `${t}\n\n${b}` : t || b;
+  return {
+    title: "",
+    body: merged,
+    tags: "",
+    aiVisible: note.aiVisible ?? true,
+  };
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -282,15 +303,6 @@ function App() {
     return false;
   });
   const [cashflowOutlookExpanded, setCashflowOutlookExpanded] = useState(false);
-  const [todayNoteExpanded, setTodayNoteExpanded] = useState(() => {
-    try {
-      const s = localStorage.getItem("zero_today_note_expanded_v1");
-      return s !== "0";
-    } catch {
-      // ignore
-    }
-    return true;
-  });
   const [activeMoneyExplanation, setActiveMoneyExplanation] = useState<MoneyMetricExplanationId | null>(null);
   const [editingTx, setEditingTx] = useState<any | null>(null);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
@@ -373,6 +385,7 @@ function App() {
   const [liveNow, setLiveNow] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [showCalendarDaySheet, setShowCalendarDaySheet] = useState(false);
+  const [readingContextNote, setReadingContextNote] = useState<DailyContextNote | null>(null);
   const [chat, setChat] = useState<Array<{ role: "assistant" | "user"; text: string }>>(() => {
     try {
       const raw = localStorage.getItem("zero_ai_chat_v1");
@@ -749,13 +762,6 @@ function App() {
       JSON.stringify(dismissedSubscriptionSuggestions.slice(0, 200)),
     );
   }, [dismissedSubscriptionSuggestions]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("zero_today_note_expanded_v1", todayNoteExpanded ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  }, [todayNoteExpanded]);
 
   useEffect(() => {
     if (!assistantOpen) return;
@@ -845,6 +851,14 @@ function App() {
 
   useEffect(() => {
     void refreshRegionalBrief();
+  }, [refreshRegionalBrief]);
+
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void refreshRegionalBrief();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
   }, [refreshRegionalBrief]);
 
   useEffect(() => {
@@ -1024,25 +1038,15 @@ function App() {
     [dailyContextNotes],
   );
   const recentDailyContextNotes = useMemo(
-    () => dailyContextNotes.slice(0, 6),
+    () => dailyContextNotes.slice(0, 5),
     [dailyContextNotes],
   );
-  const todayNotePreview = useMemo(() => {
-    const source = (todayContextNote?.body || todayContextNote?.title || "").trim();
-    if (!source) return "Capture what happened, why it mattered, and what to remember next.";
-    return source.length > 110 ? `${source.slice(0, 110).trim()}...` : source;
-  }, [todayContextNote]);
   useEffect(() => {
     if (computedCoachMemoriesKey === storedCoachMemoriesKey) return;
     void replaceCoachMemories(computedCoachMemories);
   }, [computedCoachMemories, computedCoachMemoriesKey, storedCoachMemoriesKey, replaceCoachMemories]);
   useEffect(() => {
-    setDailyContextNoteDraft({
-      title: todayContextNote?.title ?? "",
-      body: todayContextNote?.body ?? "",
-      tags: todayContextNote?.tags.join(", ") ?? "",
-      aiVisible: todayContextNote?.aiVisible ?? true,
-    });
+    setDailyContextNoteDraft(draftFromDailyContextNote(todayContextNote));
     setDailyContextNoteStatus("");
   }, [todayContextNote?.id, todayContextNote?.updatedAt]);
   const spendingCalendar = useMemo(() => {
@@ -1227,7 +1231,8 @@ function App() {
     () => [...newsItems].sort((a, b) => {
       const ta = a.publishedAt ? +new Date(a.publishedAt) : 0;
       const tb = b.publishedAt ? +new Date(b.publishedAt) : 0;
-      return tb - ta;
+      if (tb !== ta) return tb - ta;
+      return (b.url || "").localeCompare(a.url || "");
     }),
     [newsItems],
   );
@@ -1959,9 +1964,10 @@ function App() {
     }
   };
 
-  const askAssistant = async (question: string) => {
+  const askAssistant = async (question: string, displayQuestion = question) => {
     if (!question.trim() || !settings) return;
     const text = question.trim();
+    const visibleQuestion = displayQuestion.trim() || text;
     const scenarioPreview = simulateWhatIfScenario(text, transactions, subscriptions, settings);
     const affordabilityAssessment = assessAffordability({
       question: text,
@@ -2000,8 +2006,8 @@ function App() {
       setWhatIfScenarios((prev) => [
         {
           id: Date.now(),
-          prompt: text,
-          title: text.length > 56 ? `${text.slice(0, 56)}...` : text,
+          prompt: visibleQuestion,
+          title: visibleQuestion.length > 56 ? `${visibleQuestion.slice(0, 56)}...` : visibleQuestion,
           changes: scenarioPreview.baseline.changes,
           currentMonthEnd: scenarioPreview.baseline.currentMonthEnd,
           simulatedMonthEnd: scenarioPreview.baseline.simulatedMonthEnd,
@@ -2012,7 +2018,7 @@ function App() {
       ].slice(0, 12));
     }
     const historyBeforeQuestion = [...chat].slice(-10) as Array<{ role: "assistant" | "user"; text: string }>;
-    const nextHistory = [...historyBeforeQuestion, { role: "user", text }] as Array<{ role: "assistant" | "user"; text: string }>;
+    const nextHistory = [...historyBeforeQuestion, { role: "user", text: visibleQuestion }] as Array<{ role: "assistant" | "user"; text: string }>;
     setChat(nextHistory);
     setAssistantBusy(true);
     try {
@@ -2310,6 +2316,11 @@ function App() {
       setAssistantBusy(false);
     }
   };
+  const requestAiDayPlan = () => {
+    if (assistantBusy || !settings) return;
+    setAssistantOpen(true);
+    void askAssistant(PLAN_MY_DAY_PROMPT, "Plan my day");
+  };
   const selectedWhatIfSubscription = useMemo(
     () => subscriptions.find((s) => s.id === whatIfCancelSubscriptionId) ?? null,
     [subscriptions, whatIfCancelSubscriptionId],
@@ -2339,37 +2350,28 @@ function App() {
   }, []);
 
   const saveDailyContextNote = useCallback(async () => {
-    const title = dailyContextNoteDraft.title.trim().slice(0, 120);
     const body = dailyContextNoteDraft.body.trim().slice(0, 1200);
-    const tags = dailyContextNoteDraft.tags
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean)
-      .slice(0, 8);
-    if (!title && !body) {
+    if (!body) {
       setDailyContextNoteStatus("Write a quick note first.");
       return;
     }
     await upsertDailyContextNote({
       date: todayIso,
-      title,
+      title: "",
       body,
-      tags,
+      tags: todayContextNote?.tags ?? [],
       aiVisible: dailyContextNoteDraft.aiVisible,
     });
     setDailyContextNoteStatus(dailyContextNoteDraft.aiVisible ? "Saved for Coach Zero." : "Saved privately for today.");
-  }, [dailyContextNoteDraft, todayIso, upsertDailyContextNote]);
+  }, [dailyContextNoteDraft, todayContextNote?.tags, todayIso, upsertDailyContextNote]);
 
-  const clearDailyContextNote = useCallback(async () => {
-    if (!todayContextNote?.id) {
-      setDailyContextNoteDraft(createEmptyDailyContextNoteDraft());
-      setDailyContextNoteStatus("");
-      return;
-    }
-    await deleteDailyContextNote(todayContextNote.id);
-    setDailyContextNoteDraft(createEmptyDailyContextNoteDraft());
-    setDailyContextNoteStatus("Today's note cleared.");
-  }, [todayContextNote, deleteDailyContextNote]);
+  /** Reset the editor to match today’s saved note (if any). Does not delete stored notes. */
+  const resetDailyContextDraft = useCallback(() => {
+    setDailyContextNoteDraft(draftFromDailyContextNote(todayContextNote));
+    setDailyContextNoteStatus(
+      todayContextNote ? "Restored your saved note." : "Draft cleared.",
+    );
+  }, [todayContextNote]);
 
   const saveIncomeDraft = useCallback(async () => {
     const name = incomeDraft.name.trim();
@@ -2807,158 +2809,6 @@ function App() {
               ) : (
                 <p className="muted">Add a bit more transaction history and Coach Zero will start remembering your spending rhythm automatically.</p>
               )}
-            </section>
-
-            <section className="card daily-context-note-card">
-              <div className="daily-context-note-top">
-                <div className="daily-context-note-top-copy">
-                  <p className="daily-context-note-kicker">Daily memory</p>
-                  <h3>Today note</h3>
-                  <p className="muted">{todayNotePreview}</p>
-                </div>
-                <div className="daily-context-note-top-actions">
-                  <span className="badge">{dailyContextNotes.length} note{dailyContextNotes.length === 1 ? "" : "s"}</span>
-                  <button
-                    type="button"
-                    className="daily-context-note-collapse-btn"
-                    aria-expanded={todayNoteExpanded}
-                    aria-label={todayNoteExpanded ? "Collapse Today note" : "Expand Today note"}
-                    onClick={() => setTodayNoteExpanded((v) => !v)}
-                  >
-                    <span className="regional-brief-chevron" />
-                  </button>
-                </div>
-              </div>
-              <div className={`daily-context-note-panel ${todayNoteExpanded ? "is-expanded" : "is-collapsed"}`} aria-hidden={!todayNoteExpanded}>
-                <div className="daily-context-note-summary">
-                  <div className="daily-context-note-summary-copy">
-                    <p className="daily-context-note-date">{format(parseISO(todayIso), "EEEE, MMM d")}</p>
-                    <strong>{todayContextNote?.title?.trim() || "Capture what happened, why it mattered, and what to remember next."}</strong>
-                    <p className="muted">Add spending, plans, subscriptions, or routine context if it matters today.</p>
-                  </div>
-                  <div className="daily-context-note-summary-pills">
-                    <span className={`daily-context-note-ai-pill ${dailyContextNoteDraft.aiVisible ? "on" : "off"}`}>
-                      {dailyContextNoteDraft.aiVisible ? "AI on" : "Private"}
-                    </span>
-                    <span className="badge">{recentAiVisibleNotes.length} AI-visible</span>
-                  </div>
-                </div>
-
-                <div className="daily-context-note-compose">
-                  <div className="daily-context-note-example">
-                    <span className="daily-context-note-example-label">Example</span>
-                    <p className="muted">Ate out because I missed meal prep, spent more than planned, need to prep lunch tonight.</p>
-                  </div>
-                  <div className="daily-context-note-grid">
-                    <label>
-                      Title
-                      <input
-                        value={dailyContextNoteDraft.title}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setDailyContextNoteDraft((prev) => ({ ...prev, title: value }));
-                          setDailyContextNoteStatus("");
-                        }}
-                        placeholder="Optional title"
-                        maxLength={120}
-                      />
-                    </label>
-                    <label>
-                      Tags
-                      <input
-                        value={dailyContextNoteDraft.tags}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setDailyContextNoteDraft((prev) => ({ ...prev, tags: value }));
-                          setDailyContextNoteStatus("");
-                        }}
-                        placeholder="spending, subscriptions, routine"
-                      />
-                    </label>
-                  </div>
-                  <label className="daily-context-note-field-body">
-                    Quick note
-                    <textarea
-                      rows={5}
-                      value={dailyContextNoteDraft.body}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setDailyContextNoteDraft((prev) => ({ ...prev, body: value }));
-                        setDailyContextNoteStatus("");
-                      }}
-                      placeholder="What happened today, why it happened, and what should you remember next?"
-                      maxLength={1200}
-                    />
-                  </label>
-                  <label className="daily-context-note-toggle">
-                    <input
-                      type="checkbox"
-                      checked={dailyContextNoteDraft.aiVisible}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setDailyContextNoteDraft((prev) => ({ ...prev, aiVisible: checked }));
-                        setDailyContextNoteStatus("");
-                      }}
-                    />
-                    <span>Let AI use this note later for smarter help</span>
-                  </label>
-                  <div className="daily-context-note-actions">
-                    <button type="button" onClick={() => { void saveDailyContextNote(); }}>
-                      Save note
-                    </button>
-                    <button type="button" className="ghost-btn" onClick={() => { void clearDailyContextNote(); }}>
-                      Clear
-                    </button>
-                  </div>
-                  <div className="daily-context-note-footer">
-                    <span className="muted">
-                      {dailyContextNoteStatus
-                        || (todayContextNote
-                          ? `Last saved ${formatDistanceToNow(new Date(todayContextNote.updatedAt), { addSuffix: true })}`
-                          : "No note saved yet")}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="daily-context-note-history">
-                  <div className="daily-context-note-history-head">
-                    <div>
-                      <p className="daily-context-note-kicker">Recent notes</p>
-                      <strong>Your notes</strong>
-                    </div>
-                    <span className="badge">{dailyContextNotes.length}</span>
-                  </div>
-                  {recentDailyContextNotes.length > 0 ? (
-                    <div className="daily-context-note-history-list">
-                      {recentDailyContextNotes.map((note) => (
-                        <article
-                          key={note.id ?? `${note.date}-${note.updatedAt}`}
-                          className={`daily-context-note-item${note.date === todayIso ? " is-today" : ""}`}
-                        >
-                          <div className="daily-context-note-item-head">
-                            <div>
-                              <strong>{note.title.trim() || format(parseISO(note.date), "EEE, MMM d")}</strong>
-                              <p className="muted">
-                                {format(parseISO(note.date), "EEE, MMM d")}
-                                {note.aiVisible ? " · AI visible" : " · Private"}
-                              </p>
-                            </div>
-                            {note.date === todayIso && <span className="badge">Today</span>}
-                          </div>
-                          {note.tags.length > 0 && (
-                            <div className="daily-context-note-tags">
-                              {note.tags.slice(0, 4).map((tag) => <span key={`${note.date}-${tag}`}>{tag}</span>)}
-                            </div>
-                          )}
-                          <p className="daily-context-note-item-body">{note.body || "No details added."}</p>
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">No notes yet. Save one here and it will show up in your history.</p>
-                  )}
-                </div>
-              </div>
             </section>
 
             <div className="home-section-head">
@@ -3544,6 +3394,100 @@ function App() {
                     });
                     setShowTimelineSheet(true);
                   }}>+ Add</button>
+                </div>
+              )}
+            </section>
+
+            <section className="card routine-card routine-card-notes ios-notes-card">
+              <p className="routine-section-kicker">NOTES</p>
+              <div className="ios-notes-title-block">
+                <h3 className="ios-notes-title">Today</h3>
+                <p className="muted ios-notes-subtitle">{format(parseISO(todayIso), "EEEE, MMM d")}</p>
+              </div>
+
+              <div className="ios-notes-compose-shell">
+                <textarea
+                  className="routine-notes-textarea ios-notes-textarea"
+                  rows={4}
+                  value={dailyContextNoteDraft.body}
+                  onChange={(e) => {
+                    setDailyContextNoteDraft((prev) => ({ ...prev, body: e.target.value }));
+                    setDailyContextNoteStatus("");
+                  }}
+                  placeholder="Anything worth remembering about today…"
+                  maxLength={1200}
+                />
+                <div className="ios-notes-sep" aria-hidden />
+                <label className="ios-notes-toggle-row">
+                  <span className="ios-notes-toggle-label">Share with Coach Zero</span>
+                  <input
+                    type="checkbox"
+                    className="ios-notes-toggle-input"
+                    checked={dailyContextNoteDraft.aiVisible}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setDailyContextNoteDraft((prev) => ({ ...prev, aiVisible: checked }));
+                      setDailyContextNoteStatus("");
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="ios-notes-actions-row">
+                <button type="button" className="ios-notes-btn-primary" onClick={() => { void saveDailyContextNote(); }}>
+                  Save
+                </button>
+                <button type="button" className="ios-notes-btn-secondary ghost-btn" onClick={() => resetDailyContextDraft()}>
+                  Reset
+                </button>
+              </div>
+              <p className="muted routine-notes-status ios-notes-save-status">
+                {dailyContextNoteStatus
+                  || (todayContextNote
+                    ? `Saved ${formatDistanceToNow(new Date(todayContextNote.updatedAt), { addSuffix: true })}`
+                    : "")}
+              </p>
+
+              {recentDailyContextNotes.length > 0 && (
+                <div className="ios-notes-recent-wrap">
+                  <p className="ios-notes-section-label">Recent</p>
+                  <div className="ios-notes-inset-list" role="list">
+                    {recentDailyContextNotes.map((note) => {
+                      const preview = (note.body || note.title || "").trim();
+                      const short =
+                        preview.length > 64 ? `${preview.slice(0, 64).trim()}…` : preview || "—";
+                      const label =
+                        note.date === todayIso
+                          ? "Today’s note"
+                          : `Note from ${format(parseISO(note.date), "MMMM d, yyyy")}`;
+                      return (
+                        <button
+                          key={note.id ?? `${note.date}-${note.updatedAt}`}
+                          type="button"
+                          className="ios-notes-row"
+                          role="listitem"
+                          aria-label={`Read ${label}`}
+                          onClick={() => setReadingContextNote(note)}
+                        >
+                          <div className="ios-notes-row-text">
+                            <span className="ios-notes-row-date">
+                              {note.date === todayIso ? "Today" : format(parseISO(note.date), "MMM d")}
+                            </span>
+                            <span className="ios-notes-row-preview">{short}</span>
+                          </div>
+                          <svg className="ios-notes-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path
+                              d="M9.5 7.5L14.5 12l-5 4.5"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </section>
@@ -4375,6 +4319,22 @@ function App() {
             onClose={() => setShowCalendarDaySheet(false)}
           />
         )}
+        {readingContextNote && (
+          <ContextNoteReadSheet
+            note={readingContextNote}
+            onClose={() => setReadingContextNote(null)}
+            onDelete={
+              readingContextNote.id != null
+                ? async () => {
+                    const id = readingContextNote.id;
+                    if (id == null) return;
+                    await deleteDailyContextNote(id);
+                    setReadingContextNote(null);
+                  }
+                : undefined
+            }
+          />
+        )}
         {showMorningBriefing && (
           <motion.div className="sheet-wrap morning-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.section className="sheet morning-sheet" initial={{ y: 280 }} animate={{ y: 0 }} exit={{ y: 300 }}>
@@ -4449,6 +4409,9 @@ function App() {
                 </div>
               </div>
               <div className="morning-coach-quick">
+                <button type="button" disabled={assistantBusy || !settings} onClick={requestAiDayPlan}>
+                  Plan my day
+                </button>
                 <button type="button" onClick={() => { void askAssistant("Turn my briefing into 3 action steps."); setAssistantOpen(true); }}>
                   Action steps
                 </button>
@@ -4562,6 +4525,31 @@ function App() {
                 ))}
               </div>
             )}
+            <div className="assistant-quick" aria-label="Coach Zero quick actions">
+              <button type="button" disabled={assistantBusy || !settings} onClick={requestAiDayPlan}>
+                Plan my day
+              </button>
+              <button
+                type="button"
+                disabled={assistantBusy || !settings}
+                onClick={() => {
+                  setAssistantOpen(true);
+                  void askAssistant("Turn my current routine, checklist, and money picture into 3 action steps for today.");
+                }}
+              >
+                Action steps
+              </button>
+              <button
+                type="button"
+                disabled={assistantBusy || !settings}
+                onClick={() => {
+                  setAssistantOpen(true);
+                  void askAssistant("Give me one spending rule for today using my current safe-to-spend amount and upcoming bills.");
+                }}
+              >
+                Money rule
+              </button>
+            </div>
             <div className="assistant-input ai-input-wrap">
               <input
                 value={assistantQuestion}
@@ -4908,6 +4896,66 @@ function ReminderSheet({
         </label>
         <div className="row"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><button type="submit">Save</button></div>
       </motion.form>
+    </motion.div>
+  );
+}
+
+function ContextNoteReadSheet({
+  note,
+  onClose,
+  onDelete,
+}: {
+  note: DailyContextNote;
+  onClose: () => void;
+  onDelete?: () => void | Promise<void>;
+}) {
+  const merged = [note.title?.trim(), note.body?.trim()].filter(Boolean).join("\n\n");
+  return (
+    <motion.div
+      className="sheet-wrap"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <motion.section
+        className="sheet context-note-read-sheet"
+        initial={{ y: 280 }}
+        animate={{ y: 0 }}
+        exit={{ y: 300 }}
+        onClick={(e) => e.stopPropagation()}
+        aria-labelledby="context-note-read-heading"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="context-note-read-top">
+          <p className="context-note-read-kicker" id="context-note-read-heading">
+            {format(parseISO(note.date), "EEEE, MMMM d, yyyy")}
+          </p>
+          <button type="button" className="ghost-btn context-note-read-done" onClick={onClose}>
+            Done
+          </button>
+        </div>
+        <div className="context-note-read-meta">
+          <span className={`context-note-read-pill ${note.aiVisible ? "is-on" : ""}`}>
+            {note.aiVisible ? "Coach Zero" : "Private"}
+          </span>
+          <span className="muted">
+            {formatDistanceToNow(new Date(note.updatedAt), { addSuffix: true })}
+          </span>
+        </div>
+        <div className="context-note-read-scroll">
+          <p className="context-note-read-body">{merged || "No text in this note."}</p>
+        </div>
+        {onDelete && (
+          <div className="context-note-read-footer">
+            <button type="button" className="danger-btn context-note-delete-btn" onClick={() => void onDelete()}>
+              Delete note
+            </button>
+          </div>
+        )}
+      </motion.section>
     </motion.div>
   );
 }
