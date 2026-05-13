@@ -22,7 +22,7 @@ function isSomalilandRelevant(item: { title: string; description: string; source
 export async function fetchSomalilandNews(signal?: AbortSignal): Promise<NewsItem[]> {
   let response: Response;
   try {
-    response = await fetch("/api/x-brief", { signal });
+    response = await fetch("/api/x-brief", { signal, cache: "no-store" });
   } catch {
     throw new Error("NEWS_NETWORK");
   }
@@ -50,7 +50,8 @@ export async function fetchSomalilandNews(signal?: AbortSignal): Promise<NewsIte
       const tb = Date.parse(b.publishedAt || "");
       const safeA = Number.isFinite(ta) ? ta : 0;
       const safeB = Number.isFinite(tb) ? tb : 0;
-      return safeB - safeA;
+      if (safeB !== safeA) return safeB - safeA;
+      return (b.url || "").localeCompare(a.url || "");
     })
     .slice(0, 8);
 }

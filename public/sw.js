@@ -1,4 +1,4 @@
-const CACHE = "zero-v4-zero-mark-icon";
+const CACHE = "zero-v5-no-api-cache";
 const ASSETS = ["/", "/index.html", "/manifest.webmanifest?v=ios4", "/icon.svg?v=ios4", "/maskable.svg?v=ios4"];
 let notificationData = { upcomingCount: 0 };
 
@@ -96,6 +96,12 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  // Never cache API responses — stale JSON (e.g. news brief) must not be served from SW cache.
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

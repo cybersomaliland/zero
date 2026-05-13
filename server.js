@@ -128,7 +128,8 @@ function sortNewsByRecency(items) {
     const tb = Date.parse(b.publishedAt || "");
     const safeA = Number.isFinite(ta) ? ta : 0;
     const safeB = Number.isFinite(tb) ? tb : 0;
-    return safeB - safeA;
+    if (safeB !== safeA) return safeB - safeA;
+    return (b.url || "").localeCompare(a.url || "");
   });
 }
 
@@ -192,11 +193,13 @@ async function fetchSomalilandRecentItems() {
 }
 
 app.get("/api/x-brief", async (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   const items = await fetchSomalilandRecentItems();
   return res.status(200).json({ items: items.slice(0, 10) });
 });
 
 app.get("/api/news-brief", async (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   try {
     const items = await fetchSomalilandRecentItems();
     return res.status(200).json({ items: items.slice(0, 10) });
