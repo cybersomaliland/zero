@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, formatDistanceToNow, getDay, parseISO, startOfDay, startOfMonth, subDays } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { askGroqFinanceAssistant } from "./ai";
+import { askGroqFinanceAssistant, type AskTopic } from "./ai";
 import { executeAssistantPayload, sanitizeActionsMarkerBody, streamedVisibleReply, stripActionMarkers } from "./assistantActions";
 import { buildCashflowForecast } from "./cashflow";
 import { CATEGORY_NAMES, getCategoryDefinition } from "./categories";
@@ -56,6 +56,22 @@ import type {
 const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 /** When returning to the tab/window, refresh if last sync is older than this. */
 const WEATHER_STALE_AFTER_MS = 5 * 60 * 1000;
+/**
+ * Lightweight keyword classifier so we only attach the user data the LLM actually needs.
+ * Finance wins ties so the user's strict "finance question → no other stuff" rule holds.
+ */
+const FINANCE_KEYWORDS = /(?:\$|\bmoney\b|\bbudget(?:ing|s)?\b|\bspend(?:ing|s|t)?\b|\bafford(?:able|ability)?\b|\bbill(?:s|ing)?\b|\bsave(?:d|s)?\b|\bsaving(?:s)?\b|\bsalary\b|\bincome\b|\bexpense(?:s)?\b|\btransaction(?:s)?\b|\bsubscription(?:s)?\b|\bbalance(?:s)?\b|\bcash\b|\bdollar(?:s)?\b|\bpayday\b|\bcost(?:s|ly)?\b|\bprice(?:s|y)?\b|\bdebt(?:s)?\b|\bloan(?:s)?\b|\bpaycheck(?:s)?\b|\brefund(?:s)?\b|\binvoice(?:s)?\b|\breceipt(?:s)?\b|\ballowance\b|\bforecast(?:s|ing)?\b|\bcashflow\b|\bfinanc(?:e|es|ial)\b|\bsafe(?:\s+to)?\s+spend\b|\bover\s+budget\b|\bgoal(?:s)?\b)/i;
+const ROUTINE_KEYWORDS = /(?:\broutine(?:s)?\b|\btask(?:s)?\b|\btodo(?:s)?\b|\bto-?do(?:s)?\b|\bschedule(?:d|s)?\b|\bcalendar\b|\bblock(?:s|ed)?\b|\bfocus\b|\bdeep\s+work\b|\btimeline\b|\breminder(?:s)?\b|\bmeal(?:s)?\b|\bbreakfast\b|\blunch\b|\bdinner\b|\bsnack(?:s)?\b|\bexercise\b|\bworkout(?:s)?\b|\bgym\b|\bsleep\b|\bmorning\b|\bevening\b|\bnight\b|\bchecklist\b|\bpriorit(?:y|ies)\b|\btemplate(?:s)?\b|\bappointment(?:s)?\b|\bmeeting(?:s)?\b|\bhabit(?:s)?\b|\bproductivity\b|\bplan\s+my\s+day\b)/i;
+function classifyQuestionTopic(question: string): AskTopic {
+  const text = question.trim();
+  if (!text) return "general";
+  const finance = FINANCE_KEYWORDS.test(text);
+  const routine = ROUTINE_KEYWORDS.test(text);
+  if (finance) return "finance";
+  if (routine) return "routine";
+  return "general";
+}
+
 const PLAN_MY_DAY_PROMPT = [
   "Plan my day and apply it to my Routine.",
   "Use my current money, bills, safe-to-spend amount, routine blocks, checklist, reminders, and shared daily notes.",
@@ -1964,22 +1980,35 @@ function App() {
     }
   };
 
-  const askAssistant = async (question: string, displayQuestion = question) => {
+  const askAssistant = async (
+    question: string,
+    displayQuestion = question,
+    options?: { topic?: AskTopic },
+  ) => {
     if (!question.trim() || !settings) return;
     const text = question.trim();
     const visibleQuestion = displayQuestion.trim() || text;
-    const scenarioPreview = simulateWhatIfScenario(text, transactions, subscriptions, settings);
-    const affordabilityAssessment = assessAffordability({
-      question: text,
-      transactions,
-      subscriptions,
-      recurringIncome,
-      plannedCashflows,
-      settings,
-      activeGoal: activeSavingsGoal,
-      referenceDate: liveNow,
-    });
-    const matchedMoneyExplanation = matchMoneyExplanationQuestion(text, moneyMetricExplanations);
+    const topic: AskTopic = options?.topic ?? classifyQuestionTopic(text);
+    const includeFinance = topic === "finance" || topic === "both";
+    const includeRoutine = topic === "routine" || topic === "general" || topic === "both";
+    const scenarioPreview = includeFinance
+      ? simulateWhatIfScenario(text, transactions, subscriptions, settings)
+      : null;
+    const affordabilityAssessment = includeFinance
+      ? assessAffordability({
+        question: text,
+        transactions,
+        subscriptions,
+        recurringIncome,
+        plannedCashflows,
+        settings,
+        activeGoal: activeSavingsGoal,
+        referenceDate: liveNow,
+      })
+      : null;
+    const matchedMoneyExplanation = includeFinance
+      ? matchMoneyExplanationQuestion(text, moneyMetricExplanations)
+      : null;
     const recentScenarioContext = whatIfScenarios
       .slice(0, 3)
       .map((s) => `${s.title}: month-end ${money(s.simulatedMonthEnd)} vs baseline ${money(s.currentMonthEnd)}.`)
@@ -2025,15 +2054,22 @@ function App() {
       const actionNotes = await runAssistantAutomation(text);
       let streamedAnswer = "";
       let streamMounted = false;
+      const financeBundle = includeFinance
+        ? {
+          transactions,
+          subscriptions,
+          recurringIncome,
+          plannedCashflows,
+          settings,
+          forecastData,
+        }
+        : {};
       const answer = await askGroqFinanceAssistant({
         question: enrichedQuestion,
         chatHistory: historyBeforeQuestion,
-        transactions,
-        subscriptions,
-        recurringIncome,
-        plannedCashflows,
-        settings,
-        forecastData,
+        topic,
+        ...financeBundle,
+        ...(includeFinance ? {
         cashflowForecastSummary: {
           threshold: cashflowForecast?.threshold ?? 0,
           baselineDailySpend: cashflowForecast?.baselineDailySpend ?? 0,
@@ -2130,21 +2166,6 @@ function App() {
           summary: item.summary,
           bullets: item.bullets,
         })),
-        coachMemorySummary: coachMemories.map((memory) => ({
-          kind: memory.kind,
-          title: memory.title,
-          summary: memory.summary,
-          confidence: memory.confidence,
-          evidence: memory.evidence,
-        })),
-        dailyNoteSummary: recentAiVisibleNotes.map((note) => ({
-          date: note.date,
-          title: note.title,
-          body: note.body,
-          tags: note.tags,
-          aiVisible: note.aiVisible,
-          updatedAt: note.updatedAt,
-        })),
         decisionSummary: affordabilityAssessment
           ? {
             amount: affordabilityAssessment.amount,
@@ -2171,55 +2192,73 @@ function App() {
           weeklyIncome,
           weeklyUpcomingSubs,
         },
-        routineSnapshot: {
-          userName: (settings.profileName || "there").trim() || "there",
-          currentBlock: currentTimelineBlock
-            ? {
-              title: currentTimelineBlock.title,
-              category: currentTimelineBlock.category,
-              minutesLeft: currentTimelineBlock.minutesLeft,
-            }
-            : null,
-          todayTimeline: sortedTimelineEvents.map((e) => ({
-            date: e.date,
-            hour: e.hour,
-            startMinute: e.startMinute,
-            title: e.title,
-            category: e.category,
-            durationMinutes: e.durationMinutes,
-          })),
-          checklist: {
-            completedCount: doneTasks,
-            totalCount: tasks.length,
-            tasks: tasks.map((t) => ({ title: t.title, priority: t.priority, done: t.done })),
-          },
-          templateBlocks: routineTemplate.map((b) => ({
-            hour: b.hour,
-            name: b.name,
-            category: b.category,
-            durationMinutes: b.durationMinutes,
-          })),
-          planAhead: {
-            tomorrow: tomorrowPlans.map((i) => ({
-              dayLabel: format(new Date(i.date), "EEE"),
-              hour: i.hour,
-              title: i.title,
-              category: i.category,
+        } : {}),
+        coachMemorySummary: coachMemories.map((memory) => ({
+          kind: memory.kind,
+          title: memory.title,
+          summary: memory.summary,
+          confidence: memory.confidence,
+          evidence: memory.evidence,
+        })),
+        dailyNoteSummary: recentAiVisibleNotes.map((note) => ({
+          date: note.date,
+          title: note.title,
+          body: note.body,
+          tags: note.tags,
+          aiVisible: note.aiVisible,
+          updatedAt: note.updatedAt,
+        })),
+        ...(includeRoutine ? {
+          routineSnapshot: {
+            userName: (settings.profileName || "there").trim() || "there",
+            currentBlock: currentTimelineBlock
+              ? {
+                title: currentTimelineBlock.title,
+                category: currentTimelineBlock.category,
+                minutesLeft: currentTimelineBlock.minutesLeft,
+              }
+              : null,
+            todayTimeline: sortedTimelineEvents.map((e) => ({
+              date: e.date,
+              hour: e.hour,
+              startMinute: e.startMinute,
+              title: e.title,
+              category: e.category,
+              durationMinutes: e.durationMinutes,
             })),
-            laterThisWeek: laterWeekPlans.map((i) => ({
-              dayLabel: format(new Date(i.date), "EEE"),
-              hour: i.hour,
-              title: i.title,
-              category: i.category,
+            checklist: {
+              completedCount: doneTasks,
+              totalCount: tasks.length,
+              tasks: tasks.map((t) => ({ title: t.title, priority: t.priority, done: t.done })),
+            },
+            templateBlocks: routineTemplate.map((b) => ({
+              hour: b.hour,
+              name: b.name,
+              category: b.category,
+              durationMinutes: b.durationMinutes,
             })),
+            planAhead: {
+              tomorrow: tomorrowPlans.map((i) => ({
+                dayLabel: format(new Date(i.date), "EEE"),
+                hour: i.hour,
+                title: i.title,
+                category: i.category,
+              })),
+              laterThisWeek: laterWeekPlans.map((i) => ({
+                dayLabel: format(new Date(i.date), "EEE"),
+                hour: i.hour,
+                title: i.title,
+                category: i.category,
+              })),
+            },
+            activeReminders: routineReminders.map((r) => ({
+              label: r.label,
+              delaySeconds: r.delaySeconds,
+              enabled: r.enabled,
+            })),
+            timeOfDay: currentHour < 12 ? "morning" : currentHour < 17 ? "afternoon" : currentHour < 22 ? "evening" : "night",
           },
-          activeReminders: routineReminders.map((r) => ({
-            label: r.label,
-            delaySeconds: r.delaySeconds,
-            enabled: r.enabled,
-          })),
-          timeOfDay: currentHour < 12 ? "morning" : currentHour < 17 ? "afternoon" : currentHour < 22 ? "evening" : "night",
-        },
+        } : {}),
         onToken: (chunk) => {
           streamedAnswer += chunk;
           const visible = streamedVisibleReply(streamedAnswer);
@@ -2268,7 +2307,7 @@ function App() {
           automationFooter = `\n\nWarning: actions could not run (${err instanceof Error ? err.message : "invalid JSON"}).`;
         }
       }
-      if (affordabilityAssessment) {
+      if (includeFinance && affordabilityAssessment) {
         const decisionLines = [
           `Short-term: ${affordabilityAssessment.shortTermVerdict === "yes" ? "yes" : affordabilityAssessment.shortTermVerdict === "tight" ? "tight" : "not safely"}.`,
           `Today after purchase: ${money(affordabilityAssessment.todayAfterPurchase)}.`,
@@ -2319,7 +2358,7 @@ function App() {
   const requestAiDayPlan = () => {
     if (assistantBusy || !settings) return;
     setAssistantOpen(true);
-    void askAssistant(PLAN_MY_DAY_PROMPT, "Plan my day");
+    void askAssistant(PLAN_MY_DAY_PROMPT, "Plan my day", { topic: "both" });
   };
   const selectedWhatIfSubscription = useMemo(
     () => subscriptions.find((s) => s.id === whatIfCancelSubscriptionId) ?? null,
