@@ -184,6 +184,147 @@ h3 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .content > * { width: 100%; min-width: 0; }
 .home-layout { display: grid; gap: 14px; width: 100%; min-width: 0; }
 .home-layout > * { width: 100%; min-width: 0; }
+/* Home — “block finished” reflection (matches app surfaces + light/dark) */
+.card.block-finish-card {
+  position: relative;
+  border-radius: var(--surface-radius, 22px);
+  padding: 16px 16px 16px 18px;
+  display: grid;
+  gap: 8px;
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--accent) 7%, var(--bg-secondary)) 0%,
+    var(--bg-secondary) 42%,
+    color-mix(in srgb, #d4a574 10%, var(--bg-secondary)) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  box-shadow: var(--surface-shadow);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+.card.block-finish-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, #c9a227 65%, var(--accent)));
+}
+.card.block-finish-card .routine-section-kicker {
+  color: var(--accent) !important;
+  letter-spacing: 0.1em;
+}
+.card.block-finish-card .muted {
+  color: var(--text-secondary) !important;
+  line-height: 1.45;
+}
+.card.block-finish-card .block-finish-title {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+.card.block-finish-card .block-finish-label {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.card.block-finish-card .block-finish-textarea {
+  width: 100%;
+  min-height: 92px;
+  margin-top: 4px;
+  border-radius: 14px;
+  padding: 11px 12px;
+  font-size: 15px;
+  line-height: 1.45;
+  resize: vertical;
+  box-sizing: border-box;
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+.card.block-finish-card .block-finish-textarea::placeholder {
+  color: var(--text-muted);
+}
+.card.block-finish-card .block-finish-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.card.block-finish-card .block-finish-check input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.card.block-finish-card .block-finish-privacy-hint {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  background: color-mix(in srgb, #f59e0b 14%, var(--bg-tertiary));
+  border: 1px solid color-mix(in srgb, #f59e0b 28%, var(--border));
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .card.block-finish-card .block-finish-privacy-hint {
+  background: color-mix(in srgb, #f59e0b 18%, var(--bg-tertiary));
+  border-color: color-mix(in srgb, #f59e0b 35%, transparent);
+}
+.card.block-finish-card .block-finish-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+.card.block-finish-card .block-finish-actions .ghost-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.card.block-finish-card .block-finish-save-btn {
+  border: 0;
+  border-radius: 16px;
+  padding: 11px 20px;
+  min-height: 44px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.card.block-finish-card .block-finish-save-btn:hover {
+  filter: brightness(1.04);
+}
+.card.block-finish-card .block-finish-save-btn:active {
+  transform: scale(0.98);
+}
+html[data-theme="dark"] .card.block-finish-card {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--accent) 12%, var(--bg-secondary)) 0%,
+    var(--bg-secondary) 50%,
+    color-mix(in srgb, #fff 4%, var(--bg-secondary)) 100%
+  );
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
 .settings-layout { display: grid; gap: 14px; width: 100%; min-width: 0; }
 .settings-card {
   display: grid;
@@ -489,6 +630,14 @@ html[data-theme="dark"] .bio-lock-screen {
 .routine-card.routine-card-water {
   border: 1px solid #bfdbfe;
   background: linear-gradient(180deg, #f0f9ff, #ffffff);
+}
+.routine-card.routine-card-block-alerts {
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, var(--bg-secondary)), var(--bg-secondary));
+}
+html[data-theme="dark"] .routine-card.routine-card-block-alerts {
+  border-color: var(--border);
+  background: linear-gradient(180deg, var(--bg-tertiary), var(--bg-secondary));
 }
 .routine-water-lead {
   margin: 0;

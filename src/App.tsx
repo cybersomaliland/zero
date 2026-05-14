@@ -40,6 +40,21 @@ import {
   parseWaterReminderState,
   pickWaterNotificationBody,
 } from "./waterReminder";
+import {
+  BLOCK_END_GRACE_MIN,
+  BLOCK_HEADS_UP_LEAD_MIN,
+  blockDurationMinutes,
+  blockStartMinutes,
+  blockTimelineNotifEnabledFromStorage,
+  clearPendingBlockFinish,
+  formatBlockStartClock,
+  loadFiredKeys,
+  loadPendingBlockFinish,
+  persistFiredKeys,
+  savePendingBlockFinish,
+  setBlockTimelineNotifEnabled as persistBlockTimelineNotifEnabled,
+  type PendingBlockFinish,
+} from "./blockTimelineNotifications";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
 import { BiometricLockScreen } from "./BiometricLockScreen";
@@ -562,6 +577,11 @@ function App() {
   });
   const waterReminderRef = useRef(waterReminder);
   waterReminderRef.current = waterReminder;
+  const blockNotifFiredRef = useRef<Set<string>>(new Set());
+  const [blockTimelineNotifEnabled, setBlockTimelineNotifEnabledState] = useState(blockTimelineNotifEnabledFromStorage);
+  const [pendingBlockFinish, setPendingBlockFinish] = useState<PendingBlockFinish | null>(() => loadPendingBlockFinish());
+  const [blockFinishComment, setBlockFinishComment] = useState("");
+  const [blockFinishShareAi, setBlockFinishShareAi] = useState(true);
   const [habitSkipPrompt, setHabitSkipPrompt] = useState<HabitSkipPrompt | null>(null);
   const [habitSkipDraftReason, setHabitSkipDraftReason] = useState<HabitSkipReasonId>("time");
   const [habitSkipDraftNote, setHabitSkipDraftNote] = useState("");
@@ -667,11 +687,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
+    const tick = () => {
       const now = new Date();
       setCurrentHour(now.getHours());
       setLiveNow(now);
-    }, 60_000);
+    };
+    tick();
+    const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -958,12 +980,6 @@ function App() {
     if (!assistantOpen) return;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [assistantOpen, chat, assistantBusy]);
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setCurrentHour(new Date().getHours());
-    }, 60_000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => {
     weatherBriefRef.current = weatherBrief;
@@ -1401,6 +1417,88 @@ function App() {
     return () => window.clearInterval(id);
   }, [waterReminder.enabled, notifState]);
 
+  useEffect(() => {
+    blockNotifFiredRef.current = loadFiredKeys(new Date());
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      setPendingBlockFinish(loadPendingBlockFinish());
+      blockNotifFiredRef.current = loadFiredKeys(new Date());
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  useEffect(() => {
+    if (!blockTimelineNotifEnabled || notifState !== "granted" || !routineHydrated) return;
+    const tick = () => {
+      blockNotifFiredRef.current = loadFiredKeys(new Date());
+      const now = new Date();
+      const todayKey = format(now, "yyyy-MM-dd");
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const todayEvents = timelineEvents.filter((e) => (e.date ?? todayKey) === todayKey);
+
+      const markFired = (key: string) => {
+        blockNotifFiredRef.current.add(key);
+        persistFiredKeys(blockNotifFiredRef.current);
+      };
+
+      for (const ev of todayEvents) {
+        const start = blockStartMinutes(ev);
+        const dur = blockDurationMinutes(ev);
+        const end = start + dur;
+        const warnKey = `${todayKey}|warn|${ev.id}`;
+        const endKey = `${todayKey}|end|${ev.id}`;
+        const title = ev.title?.trim() || "Routine block";
+
+        if (nowMin >= start - BLOCK_HEADS_UP_LEAD_MIN && nowMin < start) {
+          if (!blockNotifFiredRef.current.has(warnKey)) {
+            try {
+              new Notification("Routine block starting soon", {
+                body: `"${title}" begins at ${formatBlockStartClock(ev)}.`,
+                tag: `zero-block-warn-${ev.id}-${todayKey}`,
+                requireInteraction: true,
+                silent: false,
+              });
+            } catch {
+              // ignore
+            }
+            markFired(warnKey);
+          }
+        }
+
+        if (nowMin >= end && nowMin <= end + BLOCK_END_GRACE_MIN) {
+          if (!blockNotifFiredRef.current.has(endKey)) {
+            try {
+              new Notification("Block finished", {
+                body: `“${title}” just ended. Open Zero to leave a quick note for Coach Zero if you want.`,
+                tag: `zero-block-end-${ev.id}-${todayKey}`,
+                requireInteraction: false,
+              });
+            } catch {
+              // ignore
+            }
+            markFired(endKey);
+            const pending: PendingBlockFinish = {
+              eventId: ev.id,
+              dateKey: todayKey,
+              title,
+              category: ev.category,
+              endedAtIso: now.toISOString(),
+            };
+            savePendingBlockFinish(pending);
+            setPendingBlockFinish(pending);
+          }
+        }
+      }
+    };
+    const id = window.setInterval(tick, 30_000);
+    tick();
+    return () => window.clearInterval(id);
+  }, [blockTimelineNotifEnabled, notifState, routineHydrated, timelineEvents]);
+
   const motivationView = useMemo(() => {
     const tk = format(liveNow, "yyyy-MM-dd");
     return buildMotivationView({
@@ -1468,8 +1566,7 @@ function App() {
     return copy;
   }, [timelineEvents, timelineSortAsc, liveNow]);
   const currentTimelineBlock = useMemo(() => {
-    const now = new Date();
-    const minuteOfDay = now.getHours() * 60 + now.getMinutes();
+    const minuteOfDay = liveNow.getHours() * 60 + liveNow.getMinutes();
     const active = sortedTimelineEvents.find((event) => {
       const start = timelineStartMinutes(event);
       const duration = Math.max(15, event.durationMinutes ?? 60);
@@ -1478,12 +1575,11 @@ function App() {
     if (!active) return null;
     const endMinute = timelineStartMinutes(active) + Math.max(15, active.durationMinutes ?? 60);
     return { ...active, minutesLeft: Math.max(0, endMinute - minuteOfDay) };
-  }, [sortedTimelineEvents, currentHour]);
+  }, [sortedTimelineEvents, liveNow]);
   const nextTimelineBlock = useMemo(() => {
-    const now = new Date();
-    const minuteOfDay = now.getHours() * 60 + now.getMinutes();
+    const minuteOfDay = liveNow.getHours() * 60 + liveNow.getMinutes();
     return sortedTimelineEvents.find((event) => timelineStartMinutes(event) > minuteOfDay) ?? null;
-  }, [sortedTimelineEvents, currentHour]);
+  }, [sortedTimelineEvents, liveNow]);
   const nextTimelineBlockEtaMinutes = useMemo(() => {
     if (!nextTimelineBlock) return 0;
     const nowMinute = liveNow.getHours() * 60 + liveNow.getMinutes();
@@ -2893,6 +2989,41 @@ function App() {
     setDailyContextNoteStatus(dailyContextNoteDraft.aiVisible ? "Saved for Coach Zero." : "Saved privately for today.");
   }, [dailyContextNoteDraft, todayContextNote?.tags, todayIso, upsertDailyContextNote]);
 
+  const dismissPendingBlockReflection = useCallback(() => {
+    clearPendingBlockFinish();
+    setPendingBlockFinish(null);
+    setBlockFinishComment("");
+    setBlockFinishShareAi(true);
+  }, []);
+
+  const savePendingBlockReflection = useCallback(async () => {
+    if (!pendingBlockFinish) return;
+    const comment = blockFinishComment.trim();
+    const noteDate = pendingBlockFinish.dateKey;
+    const existing = dailyContextNotes.find((n) => n.date === noteDate) ?? null;
+
+    if (comment) {
+      const safeTitle = pendingBlockFinish.title.trim() || "Routine block";
+      const blockLine = `Routine block “${safeTitle}” (${noteDate}): ${comment}`;
+      const prevBody = existing?.body?.trim() ?? "";
+      const mergedBody = prevBody ? `${prevBody}\n\n${blockLine}` : blockLine;
+      const mergedTags = [...new Set([...(existing?.tags ?? []), "routine-block"])];
+      const nextAiVisible = blockFinishShareAi ? true : (existing?.aiVisible ?? false);
+      await upsertDailyContextNote({
+        date: noteDate,
+        title: existing?.title?.trim() ?? "",
+        body: mergedBody,
+        tags: mergedTags,
+        aiVisible: nextAiVisible,
+      });
+    }
+
+    clearPendingBlockFinish();
+    setPendingBlockFinish(null);
+    setBlockFinishComment("");
+    setBlockFinishShareAi(true);
+  }, [pendingBlockFinish, blockFinishComment, blockFinishShareAi, dailyContextNotes, upsertDailyContextNote]);
+
   /** Reset the editor to match today’s saved note (if any). Does not delete stored notes. */
   const resetDailyContextDraft = useCallback(() => {
     setDailyContextNoteDraft(draftFromDailyContextNote(todayContextNote));
@@ -3162,6 +3293,59 @@ function App() {
       <main className="content">
         {tab === "Home" && (
           <div className="home-layout">
+            {pendingBlockFinish && (
+              <section className="card block-finish-card" aria-labelledby="block-finish-heading">
+                <p className="routine-section-kicker">ROUTINE</p>
+                <h3 id="block-finish-heading" className="block-finish-title">
+                  Block finished: {pendingBlockFinish.title}
+                </h3>
+                <p className="muted">
+                  Ended{" "}
+                  {Number.isFinite(Date.parse(pendingBlockFinish.endedAtIso))
+                    ? formatDistanceToNow(parseISO(pendingBlockFinish.endedAtIso), { addSuffix: true })
+                    : "recently"}
+                  {pendingBlockFinish.dateKey !== todayIso ? ` · ${pendingBlockFinish.dateKey}` : null}
+                </p>
+                <label className="block-finish-label" htmlFor="block-finish-comment">
+                  Optional note (saved to your daily note for this date)
+                </label>
+                <textarea
+                  id="block-finish-comment"
+                  className="block-finish-textarea"
+                  value={blockFinishComment}
+                  onChange={(e) => setBlockFinishComment(e.target.value.slice(0, 800))}
+                  placeholder="How did it go? Anything Coach Zero should remember?"
+                  rows={3}
+                />
+                <label className="block-finish-check">
+                  <input
+                    type="checkbox"
+                    checked={blockFinishShareAi}
+                    onChange={(e) => setBlockFinishShareAi(e.target.checked)}
+                  />
+                  <span>Share this note with Coach Zero (uses your daily note for {pendingBlockFinish.dateKey})</span>
+                </label>
+                {(() => {
+                  const ctx = dailyContextNotes.find((n) => n.date === pendingBlockFinish.dateKey);
+                  if (ctx && !ctx.aiVisible && blockFinishShareAi && ctx.body.trim()) {
+                    return (
+                      <p className="block-finish-privacy-hint">
+                        Your saved daily note for this date was private. Saving with sharing on will mark the whole note visible to Coach Zero.
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+                <div className="block-finish-actions">
+                  <button type="button" className="ghost-btn" onClick={dismissPendingBlockReflection}>
+                    Dismiss
+                  </button>
+                  <button type="button" className="block-finish-save-btn" onClick={() => { void savePendingBlockReflection(); }}>
+                    Save
+                  </button>
+                </div>
+              </section>
+            )}
             <section
               className={`home-intro regional-brief-card${regionalBriefExpanded ? "" : " regional-brief-card--collapsed"}`}
               aria-labelledby="regional-brief-heading"
@@ -4549,6 +4733,42 @@ function App() {
               </div>
             </section>
 
+            <section className="card routine-card routine-card-block-alerts">
+              <p className="routine-section-kicker">TIMELINE</p>
+              <div className="row routine-card-head">
+                <h3>Block start &amp; end alerts</h3>
+                <label className="ios-switch">
+                  <input
+                    type="checkbox"
+                    checked={blockTimelineNotifEnabled}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setBlockTimelineNotifEnabledState(on);
+                      persistBlockTimelineNotifEnabled(on);
+                    }}
+                  />
+                  <span />
+                </label>
+              </div>
+              <p className="muted routine-water-lead">
+                About {BLOCK_HEADS_UP_LEAD_MIN} minutes before each scheduled block, Zero sends a{" "}
+                <strong>high-attention</strong> system heads-up (sticky on supported devices). When a block ends, you get a
+                lighter “finished” ping and a card on Home to optionally log how it went for Coach Zero.
+              </p>
+              <p className="muted">
+                <strong>Note:</strong> timers run while this app is open or sleeping in the background (same idea as water
+                reminders). If the app is fully closed, your OS may not run these checks until you open Zero again.
+              </p>
+              <p className="muted">
+                <strong>Status:</strong>{" "}
+                {notifState !== "granted"
+                  ? "Allow notifications in Settings so these alerts can fire."
+                  : blockTimelineNotifEnabled
+                    ? "Alerts on — heads-up and end cues use your today timeline."
+                    : "Alerts off."}
+              </p>
+            </section>
+
             <section className="card routine-card routine-card-reminders">
               <p className="routine-section-kicker">REMINDERS</p>
               {routineReminders.map((item) => (
@@ -5035,7 +5255,7 @@ function App() {
             durationMinutes={editingTimelineEvent.durationMinutes ?? 60}
             category={editingTimelineEvent.category}
             subtasks={editingTimelineEvent.subtasks}
-            timeStep={900}
+            timeStep={60}
             showSubtasks
             onClose={() => { setShowTimelineSheet(false); setEditingTimelineEvent(null); }}
             onSave={({ title, hour, startMinute, durationMinutes, category, subtasks }) => {
@@ -5069,6 +5289,7 @@ function App() {
             durationMinutes={editingTemplateBlock.durationMinutes}
             category={editingTemplateBlock.category}
             timeStep={3600}
+            endTimeStep={60}
             showSubtasks={false}
             onClose={() => { setShowTemplateSheet(false); setEditingTemplateBlock(null); }}
             onSave={({ title, hour, durationMinutes, category }) => {
@@ -5481,6 +5702,8 @@ function RoutineBlockSheet({
   category: initialCategory,
   subtasks: initialSubtasks,
   timeStep = 900,
+  /** If set, End time uses this step (seconds); Start still uses `timeStep`. Template uses hourly start + minute end. */
+  endTimeStep,
   showSubtasks = false,
   onClose,
   onSave,
@@ -5493,6 +5716,7 @@ function RoutineBlockSheet({
   category: TimelineCategory;
   subtasks?: string[];
   timeStep?: number;
+  endTimeStep?: number;
   showSubtasks?: boolean;
   onClose: () => void;
   onSave: (payload: RoutineBlockSavePayload) => void;
@@ -5518,9 +5742,9 @@ function RoutineBlockSheet({
   );
 
   const parseClock = (t: string) => {
-    const [hRaw, mRaw] = t.split(":");
-    const h = Math.max(0, Math.min(23, Number(hRaw) || 0));
-    const m = Math.max(0, Math.min(59, Number(mRaw) || 0));
+    const parts = String(t || "").trim().split(":");
+    const h = Math.max(0, Math.min(23, Number(parts[0]) || 0));
+    const m = Math.max(0, Math.min(59, Number(parts[1]) || 0));
     return { h, m, total: h * 60 + m };
   };
 
@@ -5598,10 +5822,14 @@ function RoutineBlockSheet({
           </label>
           <label>
             End
-            <input type="time" step={timeStep} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            <input type="time" step={endTimeStep ?? timeStep} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
           </label>
         </div>
-        <p className="muted">Duration: {Math.floor(durationNum / 60)}h {durationNum % 60}m</p>
+        <p className="muted">
+          Duration:{" "}
+          {durationNum >= 60 ? `${Math.floor(durationNum / 60)} hr ` : ""}
+          {durationNum % 60} min
+        </p>
         {showSubtasks && (
           <label>
             Subtasks (optional)
