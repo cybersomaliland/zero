@@ -3706,9 +3706,56 @@ html[data-theme="dark"] .bill-alert-row .live-label {
 }
 .card.finance-card-weekly {
   background:
-    radial-gradient(circle at 15% 12%, #a8d8ff 0%, #6bb9ff 18%, #2d8cff 42%, #0a4fc7 100%),
-    linear-gradient(145deg, #5bc0ff, #0a4fc7) !important;
-  color: #fff !important;
+    radial-gradient(ellipse 120% 90% at 8% -30%, rgba(236, 212, 160, 0.38) 0%, transparent 52%),
+    radial-gradient(circle at 92% 100%, rgba(184, 140, 58, 0.28) 0%, transparent 48%),
+    linear-gradient(158deg, #12101a 0%, #1c1828 36%, #0a090e 100%) !important;
+  color: #faf7f0 !important;
+  box-shadow:
+    0 22px 48px rgba(6, 4, 12, 0.58),
+    0 0 0 1px rgba(201, 162, 74, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+.card.finance-card-weekly::before {
+  background: radial-gradient(circle, rgba(255, 236, 200, 0.42) 0%, rgba(180, 145, 70, 0.14) 42%, transparent 72%);
+  opacity: 0.85;
+}
+.card.finance-card-weekly::after {
+  border: 1px solid rgba(212, 175, 106, 0.35);
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.22);
+}
+.card.finance-card-weekly .credit-card-top .muted {
+  color: rgba(236, 220, 186, 0.92) !important;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
+}
+.card.finance-card-weekly .card-network {
+  color: #f3e6c8;
+  letter-spacing: 0.2em;
+  text-shadow: 0 0 18px rgba(212, 175, 106, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.card.finance-card-weekly .amount-reveal-btn h2 {
+  background: linear-gradient(105deg, #fff9ed 0%, #e8d5a8 42%, #f5ebd4 78%, #d4b46a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 2px 14px rgba(0, 0, 0, 0.35));
+}
+.card.finance-card-weekly .amount-reveal-btn h2.amount-hidden {
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  color: rgba(245, 236, 214, 0.55);
+  letter-spacing: 0.08em;
+}
+.card.finance-card-weekly .finance-card-note {
+  color: rgba(210, 198, 170, 0.82) !important;
+}
+.card.finance-card-weekly .credit-card-bottom {
+  color: rgba(196, 184, 158, 0.88);
 }
 .credit-card.finance-card-monthly {
   background:
@@ -3928,25 +3975,52 @@ html[data-theme="dark"] .bill-alert-row .live-label {
   right: max(16px, calc((100vw - var(--phone-max-width)) / 2 + 16px));
   bottom: calc(98px + env(safe-area-inset-bottom));
   border: 0;
-  width: 58px;
-  height: 58px;
+  width: 60px;
+  height: 60px;
+  padding: 0;
   border-radius: 50%;
-  background: linear-gradient(180deg, #34a0ff, #0a84ff);
-  color: #fff;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 244, 220, 0.38) 0%, transparent 46%),
+    radial-gradient(circle at 88% 88%, rgba(184, 140, 58, 0.2) 0%, transparent 45%),
+    linear-gradient(158deg, #252030 0%, #16141f 48%, #0a090e 100%);
+  color: #f6ebd4;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: .02em;
-  box-shadow: 0 12px 28px #0a84ff70, inset 0 1px 0 #ffffff66;
+  box-shadow:
+    0 18px 40px rgba(6, 4, 12, 0.52),
+    0 0 0 1px rgba(212, 175, 106, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.35);
   cursor: pointer;
   display: grid;
   place-items: center;
   z-index: 25;
-  transition: transform .2s ease, box-shadow .2s ease;
+  transition: transform .22s ease, box-shadow .22s ease, filter .22s ease;
+}
+.ai-fab:hover {
+  filter: brightness(1.06);
+  box-shadow:
+    0 20px 44px rgba(6, 4, 12, 0.55),
+    0 0 0 1px rgba(230, 200, 130, 0.55),
+    0 0 28px rgba(201, 162, 74, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.32);
+}
+.ai-fab:focus-visible {
+  outline: none;
+  box-shadow:
+    0 18px 40px rgba(6, 4, 12, 0.52),
+    0 0 0 1px rgba(212, 175, 106, 0.42),
+    0 0 0 3px rgba(212, 175, 106, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.35);
 }
 .ai-fab:active { transform: scale(.94); }
 .ai-fab svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.45));
 }
 
 .ai-chat {
