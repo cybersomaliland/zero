@@ -444,6 +444,46 @@ html[data-theme="dark"] .bio-lock-screen {
   min-height: 320px;
   align-content: start;
 }
+.routine-card.routine-card-water {
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(180deg, #f0f9ff, #ffffff);
+}
+.routine-water-lead {
+  margin: 0;
+  line-height: 1.45;
+}
+.routine-water-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px 12px;
+}
+.routine-water-grid label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.routine-water-grid input,
+.routine-water-grid select {
+  width: 100%;
+  min-width: 0;
+  border-radius: 10px;
+  border: 1px solid #dbeafe;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+}
+.routine-water-window-hint {
+  margin: 0;
+  font-size: 12px;
+}
+.routine-water-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .routine-progress-track {
   height: 12px;
   border-radius: 999px;
@@ -1021,6 +1061,270 @@ html[data-theme="dark"] .bio-lock-screen {
   color: #24559f;
   border: 1px solid #dce5f5;
 }
+.routine-ios .routine-adherence-card {
+  display: grid;
+  gap: 12px;
+}
+.routine-ios .routine-adherence-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.routine-ios .routine-adherence-head h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.routine-ios .routine-adherence-lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.routine-ios .routine-adherence-score-wrap {
+  flex-shrink: 0;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 88px;
+}
+.routine-ios .routine-adherence-score-wrap--empty {
+  align-self: center;
+  font-size: 22px;
+}
+.routine-ios .routine-adherence-score {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: #0a84ff;
+}
+.routine-ios .routine-adherence-score-suffix {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0a84ff;
+  margin-top: -2px;
+}
+.routine-ios .routine-adherence-score-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.routine-ios .routine-adherence-meta {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.routine-ios .routine-adherence-trend {
+  font-weight: 600;
+  color: #3a3f4a;
+}
+.routine-ios .routine-adherence-trend--up {
+  color: #14723f;
+}
+.routine-ios .routine-adherence-trend--down {
+  color: #b45309;
+}
+.routine-ios .routine-adherence-today {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #f5f8ff;
+  box-shadow: inset 0 0 0 1px #dfe8f8;
+}
+.routine-ios .routine-adherence-today-label {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7d889d;
+}
+.routine-ios .routine-adherence-pills {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.routine-ios .routine-adherence-pills li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #e7ecf8;
+  text-align: center;
+  font-size: 11px;
+}
+.routine-ios .routine-adherence-pills li strong {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #1c2533;
+}
+.routine-ios .routine-adherence-pills-total strong {
+  color: #0a84ff;
+}
+@media (max-width: 380px) {
+  .routine-ios .routine-adherence-pills {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.routine-ios .habit-skip-log-card {
+  display: grid;
+  gap: 10px;
+}
+.routine-ios .habit-skip-log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.routine-ios .habit-skip-log-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.routine-ios .habit-skip-log-clear {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.routine-ios .habit-skip-log-lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.routine-ios .habit-skip-log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.routine-ios .habit-skip-log-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #f7f9fe;
+  box-shadow: inset 0 0 0 1px #e7ecf8;
+  font-size: 13px;
+}
+.routine-ios .habit-skip-log-date {
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+.routine-ios .habit-skip-log-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #475569;
+}
+.routine-ios .habit-skip-log-kind--timeline {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.routine-ios .habit-skip-log-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: #1e293b;
+}
+.routine-ios .habit-skip-log-reason {
+  font-weight: 600;
+  color: #0a84ff;
+  text-align: right;
+}
+.routine-ios .habit-skip-log-note {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.habit-skip-sheet-wrap {
+  z-index: 45;
+  backdrop-filter: blur(3px);
+  background: #0c1222aa;
+}
+.habit-skip-sheet .habit-skip-sheet-sub {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1c2533;
+}
+.habit-skip-sheet .habit-skip-why {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.habit-skip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.habit-skip-chip {
+  border: 1px solid #d9deea;
+  background: #fff;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+.habit-skip-chip--active {
+  border-color: #0a84ff;
+  background: #e8f2ff;
+  color: #0a4cb8;
+  box-shadow: inset 0 0 0 1px #0a84ff44;
+}
+.habit-skip-note-label {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+.habit-skip-note-label input {
+  border-radius: 10px;
+  border: 1px solid #dbe2ef;
+  padding: 10px 12px;
+  font-size: 15px;
+}
+.habit-skip-actions {
+  margin-top: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.habit-skip-actions button:last-child {
+  background: linear-gradient(145deg, #0a84ff, #0066e0);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+@media (max-width: 380px) {
+  .routine-ios .habit-skip-log-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .routine-ios .habit-skip-log-reason {
+    text-align: left;
+    grid-column: 1 / -1;
+  }
+}
 .routine-ios .timeline-ios-list {
   border-radius: 14px;
   padding: 4px 4px 4px 0;
@@ -1111,7 +1415,8 @@ html[data-theme="dark"] .bio-lock-screen {
   padding: 9px 10px;
 }
 .routine-ios .routine-card-plan > .muted,
-.routine-ios .routine-card-reminders > .muted {
+.routine-ios .routine-card-reminders > .muted,
+.routine-ios .routine-card-water > .muted {
   font-size: 12px;
   color: #7f8899;
 }
@@ -2000,6 +2305,179 @@ html[data-theme="dark"] .bio-lock-screen {
 .coach-memory-evidence p {
   margin: 0;
 }
+
+.motivation-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: linear-gradient(145deg, #fffdf8, #f4f7ff);
+  border: 1px solid #ebe4d6;
+  box-shadow: 0 12px 28px #2a1f0a10, inset 0 1px 0 #ffffffcc;
+}
+.motivation-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.motivation-kicker {
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #b45309;
+}
+.motivation-xp-total {
+  margin: 0;
+  font-size: 15px;
+}
+.motivation-xp-total strong {
+  font-size: 26px;
+  letter-spacing: -0.03em;
+}
+.motivation-level-next {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+.motivation-level-next-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.motivation-level-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #e8e4dc;
+  overflow: hidden;
+}
+.motivation-level-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f59e0b, #f97316, #ea580c);
+  transition: width 0.35s ease;
+}
+.motivation-details {
+  border-radius: 12px;
+  background: #ffffffb8;
+  box-shadow: inset 0 0 0 1px #e6e0d4;
+  padding: 2px 10px;
+}
+.motivation-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 4px;
+  list-style: none;
+}
+.motivation-details summary::-webkit-details-marker {
+  display: none;
+}
+.motivation-xp-list {
+  margin: 0 0 8px;
+  padding: 0 4px 8px;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.motivation-xp-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.motivation-xp-amt {
+  font-weight: 700;
+  color: #c2410c;
+  flex-shrink: 0;
+}
+.motivation-subhead {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.motivation-badge-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+.motivation-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 11px;
+  border-radius: 14px;
+  background: #ffffffa6;
+  box-shadow: inset 0 0 0 1px #e4e0d8;
+  opacity: 0.72;
+}
+.motivation-badge--on {
+  opacity: 1;
+  box-shadow:
+    inset 0 0 0 1px #fcd34d,
+    0 6px 14px #f59e0b22;
+  background: linear-gradient(180deg, #fffbeb, #fff7ed);
+}
+.motivation-badge-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.motivation-badge-desc {
+  font-size: 11px;
+  line-height: 1.35;
+}
+.motivation-wins-list {
+  margin: 0;
+  padding-left: 1.1em;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.motivation-milestones {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.motivation-milestone {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #ffffffa6;
+  box-shadow: inset 0 0 0 1px #e4e0d8;
+}
+.motivation-milestone--done {
+  box-shadow: inset 0 0 0 1px #86efac;
+  background: #f0fdf4;
+}
+.motivation-milestone-check {
+  flex-shrink: 0;
+  width: 1.25em;
+  text-align: center;
+  font-weight: 700;
+  color: #64748b;
+}
+.motivation-milestone--done .motivation-milestone-check {
+  color: #16a34a;
+}
+.motivation-milestone strong {
+  font-size: 14px;
+}
+.motivation-milestone-detail {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
 .routine-card.routine-card-notes {
   display: flex;
   flex-direction: column;
@@ -2431,6 +2909,42 @@ html[data-theme="dark"] .coach-memory-card {
   background: linear-gradient(180deg, #1f2024f5, #191a1df0);
   border-color: #2a2c33;
   box-shadow: 0 10px 26px #00000066, inset 0 1px 0 #ffffff0f;
+}
+html[data-theme="dark"] .motivation-card {
+  background: linear-gradient(145deg, #1c1d21, #1a1b20);
+  border-color: #3a3428;
+  box-shadow: 0 12px 28px #00000055, inset 0 1px 0 #ffffff0a;
+}
+html[data-theme="dark"] .motivation-kicker {
+  color: #fbbf24;
+}
+html[data-theme="dark"] .motivation-xp-amt {
+  color: #fdba74;
+}
+html[data-theme="dark"] .motivation-level-bar {
+  background: #3f3f46;
+}
+html[data-theme="dark"] .motivation-details {
+  background: #26282ef2;
+  box-shadow: inset 0 0 0 1px #353946;
+}
+html[data-theme="dark"] .motivation-badge {
+  background: #26282ef2;
+  box-shadow: inset 0 0 0 1px #353946;
+}
+html[data-theme="dark"] .motivation-badge--on {
+  background: linear-gradient(180deg, #3a2f1a, #2d2618);
+  box-shadow:
+    inset 0 0 0 1px #ca8a04,
+    0 6px 14px #00000044;
+}
+html[data-theme="dark"] .motivation-milestone {
+  background: #26282ef2;
+  box-shadow: inset 0 0 0 1px #353946;
+}
+html[data-theme="dark"] .motivation-milestone--done {
+  background: rgba(22, 163, 74, 0.12);
+  box-shadow: inset 0 0 0 1px #166534;
 }
 html[data-theme="dark"] .live-overview-tile,
 html[data-theme="dark"] .live-overview-action {
@@ -4223,11 +4737,62 @@ html[data-theme="dark"] .routine-ios .routine-section-kicker {
   color: #9aa5bb;
 }
 html[data-theme="dark"] .routine-ios .routine-now-card,
+html[data-theme="dark"] .routine-ios .routine-adherence-today,
 html[data-theme="dark"] .routine-ios .timeline-ios-list,
 html[data-theme="dark"] .routine-ios .routine-row,
 html[data-theme="dark"] .routine-ios .routine-reminder-item {
   background: #242933;
   box-shadow: inset 0 0 0 1px #353d4a;
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-score {
+  color: #5ac8fa;
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-score-suffix {
+  color: #5ac8fa;
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-pills li {
+  background: #1c212c;
+  box-shadow: inset 0 0 0 1px #353d4a;
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-pills li strong {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-pills-total strong {
+  color: #5ac8fa;
+}
+html[data-theme="dark"] .routine-ios .routine-adherence-trend {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .routine-ios .habit-skip-log-row {
+  background: #242933;
+  box-shadow: inset 0 0 0 1px #353d4a;
+}
+html[data-theme="dark"] .routine-ios .habit-skip-log-date {
+  color: #94a3b8;
+}
+html[data-theme="dark"] .routine-ios .habit-skip-log-label {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .routine-ios .habit-skip-log-reason {
+  color: #5ac8fa;
+}
+html[data-theme="dark"] .habit-skip-chip {
+  background: #1c212c;
+  border-color: #3b4760;
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .habit-skip-chip--active {
+  border-color: #5ac8fa;
+  background: #1a2f3d;
+  color: #7dd3fc;
+}
+html[data-theme="dark"] .habit-skip-note-label input {
+  background: #1c212c;
+  border-color: #3b4760;
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .habit-skip-sheet .habit-skip-sheet-sub {
+  color: var(--text-primary);
 }
 html[data-theme="dark"] .routine-ios .ghost-btn {
   background: #2b3342;

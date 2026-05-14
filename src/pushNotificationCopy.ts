@@ -16,5 +16,6 @@ export const PUSH_NOTIFICATION_KIND_META: PushNotificationKindMeta[] = [
   { id: "task_still_open", label: "Open task reminder", hint: "[task]" },
   { id: "morning_briefing", label: "Morning briefing", hint: "[X], [amount], [block], [time]" },
   { id: "streak_protect", label: "Streak protection", hint: "[X] (streak days)" },
+  { id: "water_reminder", label: "Water / hydration", hint: "[message] (optional)" },
   { id: "custom", label: "Custom / test pings", hint: "[message]; title may use default from sender" },
 ];

@@ -249,6 +249,7 @@ const PUSH_MESSAGE_KEYS = new Set([
   "task_still_open",
   "morning_briefing",
   "streak_protect",
+  "water_reminder",
   "custom",
 ]);
 
@@ -357,6 +358,12 @@ function buildNotification(type, data = {}) {
       "Protect [X] days — one tiny log saves the chain.",
       "Streak [X] — touch Routine or Activity before midnight.",
     ],
+    water_reminder: [
+      "Pour a glass now — steady hydration beats a crash fix later.",
+      "Water break: your focus and mood run on this fuel.",
+      "Time to drink — small sips through the day win.",
+      "Hydration check — treat this like a calendar invite you keep.",
+    ],
     custom: ["[message]"],
   };
 
@@ -369,6 +376,7 @@ function buildNotification(type, data = {}) {
     task_still_open: task,
     morning_briefing: "Morning pulse",
     streak_protect: "Streak protection",
+    water_reminder: "Drink water",
     custom: compactLabel(data.title, "Update"),
   };
 

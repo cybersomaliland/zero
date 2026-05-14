@@ -90,6 +90,7 @@ export type PushNotificationKind =
   | "task_still_open"
   | "morning_briefing"
   | "streak_protect"
+  | "water_reminder"
   | "custom";
 
 /** Optional title/body overrides per push kind (placeholders same as server templates). */

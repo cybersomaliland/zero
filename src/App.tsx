@@ -24,6 +24,22 @@ import {
   type MoneyMetricExplanationId,
 } from "./logic";
 import { fetchHargeisaWeather, type HargeisaWeatherBrief } from "./hargeisaWeather";
+import {
+  buildMotivationView,
+  defaultMotivationMeta,
+  nextMotivationMeta,
+  parseMotivationMeta,
+} from "./motivation";
+import {
+  WATER_REMINDER_STORAGE_KEY,
+  WATER_INTERVAL_PRESETS,
+  clampWaterIntervalMinutes,
+  snapWaterIntervalToPreset,
+  defaultWaterReminderState,
+  isWithinWaterWindow,
+  parseWaterReminderState,
+  pickWaterNotificationBody,
+} from "./waterReminder";
 import { fetchSomalilandNews, type NewsItem } from "./news";
 import { dedupeNormalizedTransactions, getTransactionQualitySnapshot, normalizeTransactionInput } from "./quality";
 import { BiometricLockScreen } from "./BiometricLockScreen";
@@ -56,12 +72,13 @@ import type {
 const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 /** When returning to the tab/window, refresh if last sync is older than this. */
 const WEATHER_STALE_AFTER_MS = 5 * 60 * 1000;
+const MOTIVATION_META_KEY = "zero_motivation_meta_v1";
 /**
  * Lightweight keyword classifier so we only attach the user data the LLM actually needs.
  * Finance wins ties so the user's strict "finance question → no other stuff" rule holds.
  */
 const FINANCE_KEYWORDS = /(?:\$|\bmoney\b|\bbudget(?:ing|s)?\b|\bspend(?:ing|s|t)?\b|\bafford(?:able|ability)?\b|\bbill(?:s|ing)?\b|\bsave(?:d|s)?\b|\bsaving(?:s)?\b|\bsalary\b|\bincome\b|\bexpense(?:s)?\b|\btransaction(?:s)?\b|\bsubscription(?:s)?\b|\bbalance(?:s)?\b|\bcash\b|\bdollar(?:s)?\b|\bpayday\b|\bcost(?:s|ly)?\b|\bprice(?:s|y)?\b|\bdebt(?:s)?\b|\bloan(?:s)?\b|\bpaycheck(?:s)?\b|\brefund(?:s)?\b|\binvoice(?:s)?\b|\breceipt(?:s)?\b|\ballowance\b|\bforecast(?:s|ing)?\b|\bcashflow\b|\bfinanc(?:e|es|ial)\b|\bsafe(?:\s+to)?\s+spend\b|\bover\s+budget\b|\bgoal(?:s)?\b)/i;
-const ROUTINE_KEYWORDS = /(?:\broutine(?:s)?\b|\btask(?:s)?\b|\btodo(?:s)?\b|\bto-?do(?:s)?\b|\bschedule(?:d|s)?\b|\bcalendar\b|\bblock(?:s|ed)?\b|\bfocus\b|\bdeep\s+work\b|\btimeline\b|\breminder(?:s)?\b|\bmeal(?:s)?\b|\bbreakfast\b|\blunch\b|\bdinner\b|\bsnack(?:s)?\b|\bexercise\b|\bworkout(?:s)?\b|\bgym\b|\bsleep\b|\bmorning\b|\bevening\b|\bnight\b|\bchecklist\b|\bpriorit(?:y|ies)\b|\btemplate(?:s)?\b|\bappointment(?:s)?\b|\bmeeting(?:s)?\b|\bhabit(?:s)?\b|\bproductivity\b|\bplan\s+my\s+day\b)/i;
+const ROUTINE_KEYWORDS = /(?:\broutine(?:s)?\b|\btask(?:s)?\b|\btodo(?:s)?\b|\bto-?do(?:s)?\b|\bschedule(?:d|s)?\b|\bcalendar\b|\bblock(?:s|ed)?\b|\bfocus\b|\bdeep\s+work\b|\btimeline\b|\breminder(?:s)?\b|\bhydrat(?:e|ion|ing)?\b|\bwater\b|\bdrink\b|\bmeal(?:s)?\b|\bbreakfast\b|\blunch\b|\bdinner\b|\bsnack(?:s)?\b|\bexercise\b|\bworkout(?:s)?\b|\bgym\b|\bsleep\b|\bmorning\b|\bevening\b|\bnight\b|\bchecklist\b|\bpriorit(?:y|ies)\b|\btemplate(?:s)?\b|\bappointment(?:s)?\b|\bmeeting(?:s)?\b|\bhabit(?:s)?\b|\bproductivity\b|\bplan\s+my\s+day\b)/i;
 function classifyQuestionTopic(question: string): AskTopic {
   const text = question.trim();
   if (!text) return "general";
@@ -160,6 +177,7 @@ type RoutineReminderItem = {
   clockTime?: string;
   enabled: boolean;
 };
+type MealGroup = "Breakfast" | "Lunch" | "Dinner" | "Snacks";
 type RoutineDaySnapshot = {
   timelineEvents: TimelineEvent[];
   tasks: Array<{ id: number; title: string; priority: TaskPriority; category: TimelineCategory; done: boolean }>;
@@ -167,7 +185,132 @@ type RoutineDaySnapshot = {
   ritualEnergy: number;
   dayRating: 1 | 2 | 3 | 4 | 5 | null;
 };
-type MealGroup = "Breakfast" | "Lunch" | "Dinner" | "Snacks";
+
+/** How close a same-day block is to the template slot (hour + category). */
+const ROUTINE_TEMPLATE_MATCH_SLACK_MIN = 90;
+
+function routineDayTimelineEvents(dayKey: string, snap: RoutineDaySnapshot): TimelineEvent[] {
+  return (snap.timelineEvents ?? []).filter((e) => (e.date ?? dayKey) === dayKey);
+}
+
+function routineTemplateSlotScore(dayKey: string, snap: RoutineDaySnapshot, template: RoutineTemplateBlock[]): number | null {
+  if (template.length === 0) return null;
+  const dayEvents = routineDayTimelineEvents(dayKey, snap);
+  let matched = 0;
+  for (const block of template) {
+    const targetMin = block.hour * 60;
+    const hasSlot = dayEvents.some((ev) => {
+      if (ev.category !== block.category) return false;
+      return Math.abs(timelineStartMinutes(ev) - targetMin) <= ROUTINE_TEMPLATE_MATCH_SLACK_MIN;
+    });
+    if (hasSlot) matched += 1;
+  }
+  return Math.round((100 * matched) / template.length);
+}
+
+function routineTaskAdherenceScore(snap: RoutineDaySnapshot): number | null {
+  const list = snap.tasks ?? [];
+  if (list.length === 0) return null;
+  const done = list.filter((t) => t.done).length;
+  return Math.round((100 * done) / list.length);
+}
+
+function routinePlannedMealScore(snap: RoutineDaySnapshot): number | null {
+  const list = snap.meals ?? [];
+  const planned = list.filter((m) => m.planned);
+  if (planned.length === 0) return null;
+  const done = planned.filter((m) => m.done).length;
+  return Math.round((100 * done) / planned.length);
+}
+
+function routineDayCombinedAdherence(dayKey: string, snap: RoutineDaySnapshot, template: RoutineTemplateBlock[]): number | null {
+  const parts = [
+    routineTemplateSlotScore(dayKey, snap, template),
+    routineTaskAdherenceScore(snap),
+    routinePlannedMealScore(snap),
+  ].filter((n): n is number => n != null);
+  if (parts.length === 0) return null;
+  return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
+}
+
+function averageAdherenceInCalendarWindow(
+  routineHistory: Record<string, RoutineDaySnapshot>,
+  routineTemplate: RoutineTemplateBlock[],
+  liveNow: Date,
+  startOffsetInclusive: number,
+  windowDays: number,
+): { average: number | null; daysWithData: number } {
+  const acc: number[] = [];
+  for (let i = startOffsetInclusive; i < startOffsetInclusive + windowDays; i += 1) {
+    const d = format(subDays(startOfDay(liveNow), i), "yyyy-MM-dd");
+    const snap = routineHistory[d];
+    if (!snap) continue;
+    const s = routineDayCombinedAdherence(d, snap, routineTemplate);
+    if (s != null) acc.push(s);
+  }
+  if (acc.length === 0) return { average: null, daysWithData: 0 };
+  return {
+    average: Math.round(acc.reduce((a, b) => a + b, 0) / acc.length),
+    daysWithData: acc.length,
+  };
+}
+
+type HabitSkipReasonId = "time" | "energy" | "priority" | "forgot" | "health" | "other";
+const HABIT_SKIP_PRESETS: { id: HabitSkipReasonId; label: string }[] = [
+  { id: "time", label: "Not enough time" },
+  { id: "energy", label: "Low energy / focus" },
+  { id: "priority", label: "Priorities shifted" },
+  { id: "forgot", label: "Forgot / missed window" },
+  { id: "health", label: "Rest or not well" },
+  { id: "other", label: "Other" },
+];
+type HabitSkipLogEntry = {
+  id: string;
+  at: string;
+  date: string;
+  kind: "task" | "timeline";
+  label: string;
+  reasonId: HabitSkipReasonId;
+  reasonNote?: string;
+};
+type HabitSkipPrompt =
+  | { kind: "task"; taskId: number; title: string }
+  | { kind: "timeline"; event: TimelineEvent; dateKey: string };
+
+function habitSkipReasonLabel(id: HabitSkipReasonId): string {
+  return HABIT_SKIP_PRESETS.find((p) => p.id === id)?.label ?? id;
+}
+
+function parseHabitSkipLogFromStorage(raw: string | null): HabitSkipLogEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const allowed = new Set(HABIT_SKIP_PRESETS.map((p) => p.id));
+    const out: HabitSkipLogEntry[] = [];
+    for (const row of parsed) {
+      if (!row || typeof row !== "object") continue;
+      const o = row as Record<string, unknown>;
+      if (typeof o.id !== "string" || typeof o.at !== "string" || typeof o.date !== "string") continue;
+      if (o.kind !== "task" && o.kind !== "timeline") continue;
+      if (typeof o.label !== "string") continue;
+      if (typeof o.reasonId !== "string" || !allowed.has(o.reasonId as HabitSkipReasonId)) continue;
+      out.push({
+        id: o.id,
+        at: o.at,
+        date: o.date,
+        kind: o.kind,
+        label: o.label,
+        reasonId: o.reasonId as HabitSkipReasonId,
+        ...(typeof o.reasonNote === "string" && o.reasonNote.trim() ? { reasonNote: o.reasonNote.trim().slice(0, 240) } : {}),
+      });
+    }
+    return out.slice(0, 200);
+  } catch {
+    return [];
+  }
+}
+
 type WhatIfScenarioRecord = {
   id: number;
   prompt: string;
@@ -397,6 +540,32 @@ function App() {
   const [dayClosed, setDayClosed] = useState(false);
   const [routineHydrated, setRoutineHydrated] = useState(false);
   const [routineHistory, setRoutineHistory] = useState<Record<string, RoutineDaySnapshot>>({});
+  const [habitSkipLog, setHabitSkipLog] = useState<HabitSkipLogEntry[]>(() => {
+    try {
+      return parseHabitSkipLogFromStorage(localStorage.getItem("zero_habit_skip_log_v1"));
+    } catch {
+      return [];
+    }
+  });
+  const [motivationMeta, setMotivationMeta] = useState(() => {
+    try {
+      return parseMotivationMeta(localStorage.getItem(MOTIVATION_META_KEY));
+    } catch {
+      return defaultMotivationMeta();
+    }
+  });
+  const [waterReminder, setWaterReminder] = useState(() => {
+    try {
+      return parseWaterReminderState(localStorage.getItem(WATER_REMINDER_STORAGE_KEY));
+    } catch {
+      return defaultWaterReminderState();
+    }
+  });
+  const waterReminderRef = useRef(waterReminder);
+  waterReminderRef.current = waterReminder;
+  const [habitSkipPrompt, setHabitSkipPrompt] = useState<HabitSkipPrompt | null>(null);
+  const [habitSkipDraftReason, setHabitSkipDraftReason] = useState<HabitSkipReasonId>("time");
+  const [habitSkipDraftNote, setHabitSkipDraftNote] = useState("");
   const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [liveNow, setLiveNow] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(format(new Date(), "yyyy-MM-dd"));
@@ -693,6 +862,13 @@ function App() {
     reflectionTwo,
     dayClosed,
   ]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("zero_habit_skip_log_v1", JSON.stringify(habitSkipLog.slice(0, 200)));
+    } catch {
+      // ignore quota errors
+    }
+  }, [habitSkipLog]);
   useEffect(() => {
     try {
       const rawTemplate = localStorage.getItem("zero_routine_template_v1");
@@ -1168,6 +1344,116 @@ function App() {
       streakAtRisk: streakAtRiskFlag,
     };
   }, [transactions, routineHistory, liveNow, timelineEvents, tasks, meals, dayRating]);
+
+  useEffect(() => {
+    setMotivationMeta((prev) => nextMotivationMeta(prev, streakDays));
+  }, [streakDays]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MOTIVATION_META_KEY, JSON.stringify(motivationMeta));
+    } catch {
+      // ignore
+    }
+  }, [motivationMeta]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WATER_REMINDER_STORAGE_KEY, JSON.stringify(waterReminder));
+    } catch {
+      // ignore
+    }
+  }, [waterReminder]);
+
+  useEffect(() => {
+    if (!waterReminder.enabled || notifState !== "granted") return;
+    const tick = () => {
+      const nowMs = Date.now();
+      const clock = new Date();
+      const prev = waterReminderRef.current;
+      if (!prev.enabled) return;
+      if (prev.snoozeUntilMs != null && nowMs < prev.snoozeUntilMs) return;
+      if (!isWithinWaterWindow(clock, prev.windowStartHour, prev.windowEndHour)) return;
+      const intervalMs = clampWaterIntervalMinutes(prev.intervalMinutes) * 60 * 1000;
+      const last = prev.lastNotifiedAt;
+      if (last == null) {
+        setWaterReminder((wr) => ({ ...wr, lastNotifiedAt: nowMs }));
+        return;
+      }
+      if (nowMs - last < intervalMs) return;
+      const body = pickWaterNotificationBody(nowMs);
+      try {
+        new Notification("Drink water — important", {
+          body,
+          tag: "zero-water",
+          requireInteraction: true,
+        });
+      } catch {
+        // ignore
+      }
+      setWaterReminder((wr) => ({
+        ...wr,
+        lastNotifiedAt: nowMs,
+        snoozeUntilMs: null,
+      }));
+    };
+    const id = window.setInterval(tick, 45_000);
+    tick();
+    return () => window.clearInterval(id);
+  }, [waterReminder.enabled, notifState]);
+
+  const motivationView = useMemo(() => {
+    const tk = format(liveNow, "yyyy-MM-dd");
+    return buildMotivationView({
+      now: liveNow,
+      transactions,
+      routineHistory,
+      routineTemplate: routineTemplate.map((b) => ({ hour: b.hour, category: b.category })),
+      streakDays,
+      meta: motivationMeta,
+      liveTodayKey: tk,
+      liveTodaySnap: {
+        timelineEvents,
+        tasks,
+        meals,
+        dayRating,
+      },
+    });
+  }, [
+    liveNow,
+    transactions,
+    routineHistory,
+    routineTemplate,
+    streakDays,
+    motivationMeta,
+    timelineEvents,
+    tasks,
+    meals,
+    dayRating,
+  ]);
+
+  const waterNextSummary = useMemo(() => {
+    if (!waterReminder.enabled) return "Water reminders are off.";
+    const iv = clampWaterIntervalMinutes(waterReminder.intervalMinutes);
+    const nowMs = liveNow.getTime();
+    if (notifState !== "granted") {
+      return "Allow notifications (Settings) so Zero can nudge you on this device.";
+    }
+    if (waterReminder.snoozeUntilMs != null && nowMs < waterReminder.snoozeUntilMs) {
+      return `Snoozed — resumes ${formatDistanceToNow(new Date(waterReminder.snoozeUntilMs), { addSuffix: true })}.`;
+    }
+    if (!isWithinWaterWindow(liveNow, waterReminder.windowStartHour, waterReminder.windowEndHour)) {
+      return "Outside your quiet hours — no pings until you are back in range.";
+    }
+    const last = waterReminder.lastNotifiedAt;
+    if (last == null) {
+      return `In your window, about every ${iv} minutes while Zero stays open.`;
+    }
+    const next = last + iv * 60_000;
+    if (nowMs >= next) return "Next reminder should land within about a minute while you are in window.";
+    return `Next reminder around ${format(new Date(next), "h:mm a")} (~every ${iv} min).`;
+  }, [waterReminder, liveNow, notifState]);
+
   /** Rotate through a vivid palette so the streak badge looks clearly different each day. */
   const streakIconSurfaceStyle = useMemo((): CSSProperties => {
     const dayIndex = differenceInCalendarDays(startOfDay(liveNow), startOfDay(new Date(2020, 0, 1)));
@@ -1213,6 +1499,37 @@ function App() {
   const doneChecklistTasks = useMemo(() => todayChecklist.filter((t) => t.done), [todayChecklist]);
   const checklistProgressPct =
     tasks.length === 0 ? 0 : Math.round((doneChecklistTasks.length / tasks.length) * 100);
+  const routineAdherenceInsight = useMemo(() => {
+    const todayKey = format(liveNow, "yyyy-MM-dd");
+    const win7 = averageAdherenceInCalendarWindow(routineHistory, routineTemplate, liveNow, 0, 7);
+    const winPrev = averageAdherenceInCalendarWindow(routineHistory, routineTemplate, liveNow, 7, 7);
+    const delta =
+      win7.average != null && winPrev.average != null ? win7.average - winPrev.average : null;
+
+    const todayLive: RoutineDaySnapshot = {
+      timelineEvents,
+      tasks,
+      meals,
+      ritualEnergy,
+      dayRating,
+    };
+    const todayTimeline = routineTemplateSlotScore(todayKey, todayLive, routineTemplate);
+    const todayTasks = routineTaskAdherenceScore(todayLive);
+    const todayMeals = routinePlannedMealScore(todayLive);
+    const todayCombined = routineDayCombinedAdherence(todayKey, todayLive, routineTemplate);
+
+    return {
+      last7Avg: win7.average,
+      last7DaysWithData: win7.daysWithData,
+      prev7Avg: winPrev.average,
+      prev7DaysWithData: winPrev.daysWithData,
+      delta,
+      todayTimeline,
+      todayTasks,
+      todayMeals,
+      todayCombined,
+    };
+  }, [routineHistory, routineTemplate, liveNow, timelineEvents, tasks, meals, ritualEnergy, dayRating]);
   const tomorrowLabel = format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd");
   const tomorrowPlans = useMemo(
     () => planAheadItems.filter((item) => item.date === tomorrowLabel).sort((a, b) => a.hour - b.hour),
@@ -1823,6 +2140,38 @@ function App() {
       setPushStatusDetail("Server schedule unreachable.");
     });
   };
+  const testLocalWaterNotification = useCallback(() => {
+    if (notifState !== "granted") return;
+    const body = pickWaterNotificationBody(Date.now());
+    try {
+      new Notification("Drink water — important", {
+        body,
+        tag: "zero-water-test",
+        requireInteraction: true,
+      });
+      setPushStatusDetail("Local water reminder shown.");
+    } catch {
+      setPushStatusDetail("Could not show a local notification.");
+    }
+  }, [notifState]);
+  const testWaterPushNotification = useCallback(async () => {
+    if (notifState !== "granted") return;
+    try {
+      const response = await fetch("/api/send-notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "water_reminder", data: {} }),
+      });
+      if (response.ok) {
+        setPushStatusDetail("Water reminder sent via web push.");
+        return;
+      }
+      const errorBody = await response.json().catch(() => ({}));
+      setPushStatusDetail(String(errorBody?.error || "Water push failed."));
+    } catch {
+      setPushStatusDetail("Push server not reachable.");
+    }
+  }, [notifState]);
   const applyTemplateToToday = () => {
     if (routineTemplate.length === 0) return;
     const tk = format(new Date(), "yyyy-MM-dd");
@@ -1979,6 +2328,66 @@ function App() {
       setPushStatusDetail("Reconnect failed. Try again after refreshing the app.");
     }
   };
+
+  const appendHabitSkipLogEntry = useCallback((entry: Omit<HabitSkipLogEntry, "id" | "at"> & { reasonNote?: string }) => {
+    const id = `skip-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const full: HabitSkipLogEntry = {
+      id,
+      at: new Date().toISOString(),
+      ...entry,
+    };
+    setHabitSkipLog((prev) => [full, ...prev].slice(0, 200));
+  }, []);
+
+  const finalizeHabitSkip = useCallback(
+    (logReason: boolean) => {
+      if (!habitSkipPrompt) return;
+      if (logReason) {
+        const label =
+          habitSkipPrompt.kind === "task"
+            ? habitSkipPrompt.title
+            : (habitSkipPrompt.event.title.trim() || "Untitled block");
+        const date =
+          habitSkipPrompt.kind === "task" ? format(liveNow, "yyyy-MM-dd") : habitSkipPrompt.dateKey;
+        appendHabitSkipLogEntry({
+          date,
+          kind: habitSkipPrompt.kind,
+          label,
+          reasonId: habitSkipDraftReason,
+          ...(habitSkipDraftNote.trim() ? { reasonNote: habitSkipDraftNote.trim().slice(0, 240) } : {}),
+        });
+      }
+      if (habitSkipPrompt.kind === "task") {
+        setTasks((prev) => prev.filter((t) => t.id !== habitSkipPrompt.taskId));
+      } else {
+        setTimelineEvents((prev) => prev.filter((e) => e.id !== habitSkipPrompt.event.id));
+        setShowTimelineSheet(false);
+        setEditingTimelineEvent(null);
+      }
+      setHabitSkipPrompt(null);
+      setHabitSkipDraftNote("");
+      setHabitSkipDraftReason("time");
+    },
+    [habitSkipPrompt, habitSkipDraftReason, habitSkipDraftNote, appendHabitSkipLogEntry, liveNow],
+  );
+
+  const openHabitSkipForTask = useCallback((taskId: number, title: string) => {
+    setHabitSkipDraftReason("time");
+    setHabitSkipDraftNote("");
+    setHabitSkipPrompt({ kind: "task", taskId, title });
+  }, []);
+
+  const openHabitSkipForTimelineDelete = useCallback(() => {
+    if (!editingTimelineEvent) return;
+    const tk = format(liveNow, "yyyy-MM-dd");
+    setHabitSkipDraftReason("time");
+    setHabitSkipDraftNote("");
+    setHabitSkipPrompt({
+      kind: "timeline",
+      event: { ...editingTimelineEvent },
+      dateKey: editingTimelineEvent.date ?? tk,
+    });
+  }, [editingTimelineEvent, liveNow]);
 
   const askAssistant = async (
     question: string,
@@ -2822,6 +3231,87 @@ function App() {
             </section>
 
             <div className="home-section-head">
+              <h3 id="motivation-section-title">Motivation</h3>
+              <p className="muted">XP, levels, badges, and weekly wins from your money + routine rhythm</p>
+            </div>
+            <section className="card motivation-card" aria-labelledby="motivation-section-title">
+              <div className="motivation-hero">
+                <div>
+                  <p className="motivation-kicker">Level {motivationView.level}</p>
+                  <p className="motivation-xp-total">
+                    <strong>{motivationView.totalXp.toLocaleString()}</strong>
+                    <span className="muted"> total XP</span>
+                  </p>
+                </div>
+                <div className="motivation-level-next">
+                  <p className="muted motivation-level-next-label">
+                    {motivationView.xpIntoLevel} / {motivationView.xpForNextLevel} XP to level {motivationView.level + 1}
+                  </p>
+                  <div
+                    className="motivation-level-bar"
+                    role="progressbar"
+                    aria-valuenow={motivationView.xpIntoLevel}
+                    aria-valuemin={0}
+                    aria-valuemax={motivationView.xpForNextLevel}
+                  >
+                    <div
+                      className="motivation-level-bar-fill"
+                      style={{
+                        width: `${Math.min(100, Math.round((100 * motivationView.xpIntoLevel) / Math.max(1, motivationView.xpForNextLevel)))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <details className="motivation-details">
+                <summary>How XP adds up</summary>
+                <ul className="motivation-xp-list">
+                  {motivationView.xpBreakdown.map((row) => (
+                    <li key={row.label}>
+                      <span>{row.label}</span>
+                      <span className="motivation-xp-amt">+{row.amount}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+
+              <div className="motivation-subhead">Achievement badges</div>
+              <ul className="motivation-badge-grid">
+                {motivationView.badges.map((b) => (
+                  <li
+                    key={b.id}
+                    className={`motivation-badge${b.unlocked ? " motivation-badge--on" : ""}`}
+                    title={b.description}
+                  >
+                    <span className="motivation-badge-title">{b.title}</span>
+                    <span className="muted motivation-badge-desc">{b.description}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="motivation-subhead">Weekly wins</div>
+              <ul className="motivation-wins-list">
+                {motivationView.weeklyWins.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+
+              <div className="motivation-subhead">Routine milestones</div>
+              <ul className="motivation-milestones">
+                {motivationView.routineMilestones.map((m) => (
+                  <li key={m.id} className={m.done ? "motivation-milestone motivation-milestone--done" : "motivation-milestone"}>
+                    <span className="motivation-milestone-check" aria-hidden>{m.done ? "✓" : "○"}</span>
+                    <div>
+                      <strong>{m.title}</strong>
+                      <p className="muted motivation-milestone-detail">{m.detail}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <div className="home-section-head">
               <h3>Coach memory</h3>
               <p className="muted">Learns your real money habits</p>
             </div>
@@ -3437,6 +3927,110 @@ function App() {
               )}
             </section>
 
+            <section className="card routine-card routine-adherence-card" aria-labelledby="routine-adherence-heading">
+              <p className="routine-section-kicker">ROUTINE ADHERENCE</p>
+              <div className="routine-adherence-head">
+                <div>
+                  <h3 id="routine-adherence-heading">How closely you follow the plan</h3>
+                  <p className="muted routine-adherence-lede">
+                    Each saved day in your history is scored from your routine template (time + category match), checklist completion, and planned meals — averaged where data exists.
+                  </p>
+                </div>
+                {routineAdherenceInsight.last7Avg != null ? (
+                  <div className="routine-adherence-score-wrap" aria-live="polite">
+                    <span className="routine-adherence-score">{routineAdherenceInsight.last7Avg}</span>
+                    <span className="routine-adherence-score-suffix">%</span>
+                    <span className="muted routine-adherence-score-caption">7-day avg</span>
+                  </div>
+                ) : (
+                  <div className="routine-adherence-score-wrap routine-adherence-score-wrap--empty">
+                    <span className="muted">—</span>
+                  </div>
+                )}
+              </div>
+              {routineAdherenceInsight.last7Avg != null && (
+                <p className="muted routine-adherence-meta">
+                  Based on {routineAdherenceInsight.last7DaysWithData} of the last 7 calendar days with enough data to score.
+                  {routineAdherenceInsight.delta != null && routineAdherenceInsight.prev7DaysWithData > 0 && (
+                    <>
+                      {" "}
+                      {routineAdherenceInsight.delta > 0 && (
+                        <span className="routine-adherence-trend routine-adherence-trend--up">
+                          Up {routineAdherenceInsight.delta} pts vs the prior week.
+                        </span>
+                      )}
+                      {routineAdherenceInsight.delta < 0 && (
+                        <span className="routine-adherence-trend routine-adherence-trend--down">
+                          Down {Math.abs(routineAdherenceInsight.delta)} pts vs the prior week.
+                        </span>
+                      )}
+                      {routineAdherenceInsight.delta === 0 && (
+                        <span className="routine-adherence-trend">Flat vs the prior week.</span>
+                      )}
+                    </>
+                  )}
+                </p>
+              )}
+              {routineAdherenceInsight.last7Avg == null && (
+                <p className="muted routine-adherence-meta">
+                  Add a routine template, a few checklist items, or planned meals — after a few days we can compare what you intended with what you logged.
+                </p>
+              )}
+              <div className="routine-adherence-today">
+                <p className="routine-adherence-today-label">Today so far</p>
+                <ul className="routine-adherence-pills">
+                  <li>
+                    <span className="muted">Template</span>
+                    <strong>{routineAdherenceInsight.todayTimeline != null ? `${routineAdherenceInsight.todayTimeline}%` : "—"}</strong>
+                  </li>
+                  <li>
+                    <span className="muted">Tasks</span>
+                    <strong>{routineAdherenceInsight.todayTasks != null ? `${routineAdherenceInsight.todayTasks}%` : "—"}</strong>
+                  </li>
+                  <li>
+                    <span className="muted">Meals</span>
+                    <strong>{routineAdherenceInsight.todayMeals != null ? `${routineAdherenceInsight.todayMeals}%` : "—"}</strong>
+                  </li>
+                  <li className="routine-adherence-pills-total">
+                    <span className="muted">Blend</span>
+                    <strong>{routineAdherenceInsight.todayCombined != null ? `${routineAdherenceInsight.todayCombined}%` : "—"}</strong>
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            {habitSkipLog.length > 0 && (
+              <section className="card routine-card habit-skip-log-card" aria-labelledby="habit-skip-log-heading">
+                <p className="routine-section-kicker">SKIP REASONS</p>
+                <div className="habit-skip-log-head">
+                  <h3 id="habit-skip-log-heading">When you dropped a block or task</h3>
+                  <button
+                    type="button"
+                    className="ghost-btn habit-skip-log-clear"
+                    onClick={() => {
+                      if (window.confirm("Clear all logged skip reasons on this device?")) setHabitSkipLog([]);
+                    }}
+                  >
+                    Clear log
+                  </button>
+                </div>
+                <p className="muted habit-skip-log-lede">
+                  Removing a checklist item or deleting a timeline block opens a quick reason picker. Use it to spot patterns (time crunches vs energy dips).
+                </p>
+                <ul className="habit-skip-log-list">
+                  {habitSkipLog.slice(0, 12).map((entry) => (
+                    <li key={entry.id} className="habit-skip-log-row">
+                      <span className="habit-skip-log-date">{format(parseISO(entry.date), "MMM d")}</span>
+                      <span className={`habit-skip-log-kind habit-skip-log-kind--${entry.kind}`}>{entry.kind === "task" ? "Task" : "Block"}</span>
+                      <span className="habit-skip-log-label">{entry.label}</span>
+                      <span className="habit-skip-log-reason">{habitSkipReasonLabel(entry.reasonId)}</span>
+                      {entry.reasonNote && <span className="muted habit-skip-log-note">{entry.reasonNote}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <section className="card routine-card routine-card-timeline routine-card-timeline-ios">
               <p className="routine-section-kicker">TIMELINE</p>
               <IosDayTimeline
@@ -3590,7 +4184,7 @@ function App() {
                           type="button"
                           className="ghost-btn checklist-board-remove"
                           aria-label={`Remove task: ${task.title}`}
-                          onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}
+                          onClick={() => openHabitSkipForTask(task.id, task.title)}
                         >
                           Remove
                         </button>
@@ -3631,7 +4225,7 @@ function App() {
                           type="button"
                           className="ghost-btn checklist-board-remove"
                           aria-label={`Remove task: ${task.title}`}
-                          onClick={() => setTasks((prev) => prev.filter((t) => t.id !== task.id))}
+                          onClick={() => openHabitSkipForTask(task.id, task.title)}
                         >
                           Remove
                         </button>
@@ -3785,6 +4379,108 @@ function App() {
                   <span>{format(new Date(item.date), "EEE")} · {item.hour > 12 ? `${item.hour - 12}pm` : item.hour === 12 ? "12pm" : `${item.hour}am`} · {item.title}</span>
                 </div>
               ))}
+            </section>
+
+            <section className="card routine-card routine-card-water">
+              <p className="routine-section-kicker">HYDRATION</p>
+              <div className="row routine-card-head">
+                <h3>Water reminders</h3>
+                <label className="ios-switch">
+                  <input
+                    type="checkbox"
+                    checked={waterReminder.enabled}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setWaterReminder((wr) => ({
+                        ...wr,
+                        enabled: on,
+                        lastNotifiedAt: on ? Date.now() : wr.lastNotifiedAt,
+                      }));
+                    }}
+                  />
+                  <span />
+                </label>
+              </div>
+              <p className="muted routine-water-lead">
+                Important but lightweight: Zero checks about every 45 seconds while the app is open, then fires a
+                sticky system notification when you are inside your hours. Allow notifications and keep Zero in the
+                background if your OS allows it.
+              </p>
+              <p className="muted"><strong>Status:</strong> {waterNextSummary}</p>
+              <div className="routine-water-grid">
+                <label>
+                  Interval
+                  <select
+                    value={String(snapWaterIntervalToPreset(waterReminder.intervalMinutes))}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setWaterReminder((wr) => ({ ...wr, intervalMinutes: snapWaterIntervalToPreset(v) }));
+                    }}
+                  >
+                    {WATER_INTERVAL_PRESETS.map((m) => (
+                      <option key={m} value={m}>{m} minutes</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Start hour (0–23)
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={waterReminder.windowStartHour}
+                    onChange={(e) => setWaterReminder((wr) => ({
+                      ...wr,
+                      windowStartHour: Math.min(23, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                    }))}
+                  />
+                </label>
+                <label>
+                  End hour (1–24, exclusive)
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={waterReminder.windowEndHour}
+                    onChange={(e) => setWaterReminder((wr) => ({
+                      ...wr,
+                      windowEndHour: Math.min(24, Math.max(1, Math.round(Number(e.target.value) || 22))),
+                    }))}
+                  />
+                </label>
+              </div>
+              <p className="muted routine-water-window-hint">
+                Example: 7 → 22 is 7:00 a.m. through 9:59 p.m. If end is earlier than start, the window wraps overnight (night-shift friendly).
+              </p>
+              <div className="routine-water-actions">
+                <button type="button" className="ghost-btn" onClick={() => { void enableNotifications(); }}>
+                  Notification settings
+                </button>
+                <button type="button" className="ghost-btn" disabled={notifState !== "granted"} onClick={testLocalWaterNotification}>
+                  Test on this device
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setWaterReminder((wr) => ({
+                    ...wr,
+                    snoozeUntilMs: Date.now() + 20 * 60 * 1000,
+                  }))}
+                >
+                  Snooze 20 min
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setWaterReminder((wr) => ({
+                    ...wr,
+                    lastNotifiedAt: Date.now(),
+                    snoozeUntilMs: null,
+                  }))}
+                >
+                  I drank — reset timer
+                </button>
+              </div>
             </section>
 
             <section className="card routine-card routine-card-reminders">
@@ -4118,6 +4814,12 @@ function App() {
                 <button type="button" className="ghost-btn" onClick={() => { void testNotification(); }} disabled={notifState !== "granted"}>
                   Test notification
                 </button>
+                <button type="button" className="ghost-btn" onClick={testLocalWaterNotification} disabled={notifState !== "granted"}>
+                  Test water (this device)
+                </button>
+                <button type="button" className="ghost-btn" onClick={() => { void testWaterPushNotification(); }} disabled={notifState !== "granted"}>
+                  Test water (web push)
+                </button>
                 <button type="button" className="ghost-btn" onClick={() => { void reconnectPush(); }}>
                   Reconnect push
                 </button>
@@ -4289,9 +4991,7 @@ function App() {
               setEditingTimelineEvent(null);
             }}
             onDelete={() => {
-              setTimelineEvents((prev) => prev.filter((e) => e.id !== editingTimelineEvent.id));
-              setShowTimelineSheet(false);
-              setEditingTimelineEvent(null);
+              openHabitSkipForTimelineDelete();
             }}
           />
         )}
@@ -4356,6 +5056,22 @@ function App() {
             breakdown={dailyBreakdown[selectedCalendarDay]}
             transactions={selectedDayTransactions}
             onClose={() => setShowCalendarDaySheet(false)}
+          />
+        )}
+        {habitSkipPrompt && (
+          <HabitSkipReasonSheet
+            headline={habitSkipPrompt.kind === "task" ? "Remove task" : "Remove calendar block"}
+            subtitle={habitSkipPrompt.kind === "task" ? habitSkipPrompt.title : (habitSkipPrompt.event.title.trim() || "Untitled block")}
+            selectedId={habitSkipDraftReason}
+            onSelectId={setHabitSkipDraftReason}
+            note={habitSkipDraftNote}
+            onNoteChange={setHabitSkipDraftNote}
+            onLogAndRemove={() => finalizeHabitSkip(true)}
+            onRemoveSilently={() => finalizeHabitSkip(false)}
+            onClose={() => {
+              setHabitSkipPrompt(null);
+              setHabitSkipDraftNote("");
+            }}
           />
         )}
         {readingContextNote && (
@@ -4994,6 +5710,86 @@ function ContextNoteReadSheet({
             </button>
           </div>
         )}
+      </motion.section>
+    </motion.div>
+  );
+}
+
+function HabitSkipReasonSheet({
+  headline,
+  subtitle,
+  selectedId,
+  onSelectId,
+  note,
+  onNoteChange,
+  onLogAndRemove,
+  onRemoveSilently,
+  onClose,
+}: {
+  headline: string;
+  subtitle: string;
+  selectedId: HabitSkipReasonId;
+  onSelectId: (id: HabitSkipReasonId) => void;
+  note: string;
+  onNoteChange: (s: string) => void;
+  onLogAndRemove: () => void;
+  onRemoveSilently: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      className="sheet-wrap habit-skip-sheet-wrap"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <motion.section
+        className="sheet habit-skip-sheet"
+        initial={{ y: 280 }}
+        animate={{ y: 0 }}
+        exit={{ y: 300 }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="habit-skip-sheet-title"
+      >
+        <h3 id="habit-skip-sheet-title">{headline}</h3>
+        <p className="muted habit-skip-sheet-sub">{subtitle}</p>
+        <p className="muted habit-skip-why">Why skip? (saved when you choose log &amp; remove)</p>
+        <div className="habit-skip-chips" role="group" aria-label="Skip reason">
+          {HABIT_SKIP_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={selectedId === p.id ? "habit-skip-chip habit-skip-chip--active" : "habit-skip-chip"}
+              onClick={() => onSelectId(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <label className="habit-skip-note-label">
+          <span className="muted">Optional detail</span>
+          <input
+            value={note}
+            onChange={(e) => onNoteChange(e.target.value)}
+            maxLength={240}
+            placeholder="Short context (optional)"
+          />
+        </label>
+        <div className="row habit-skip-actions">
+          <button type="button" className="ghost-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="ghost-btn" onClick={onRemoveSilently}>
+            Remove without logging
+          </button>
+          <button type="button" onClick={onLogAndRemove}>
+            Log &amp; remove
+          </button>
+        </div>
       </motion.section>
     </motion.div>
   );
