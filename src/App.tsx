@@ -3317,35 +3317,6 @@ function App() {
             </section>
 
             <div className="home-section-head">
-              <h3>Spending patterns</h3>
-              <p className="muted">Inferred from your transactions</p>
-            </div>
-            <section className="card coach-memory-card">
-              {coachMemoryHighlights.length > 0 ? (
-                <>
-                  {coachMemoryHighlights.map((memory) => (
-                    <article key={memory.kind} className="coach-memory-item">
-                      <div className="coach-memory-head">
-                        <div>
-                          <p className="coach-memory-kicker">{memory.title}</p>
-                          <strong>{memory.summary}</strong>
-                        </div>
-                        <span className="coach-memory-confidence">{memory.confidence}% match</span>
-                      </div>
-                      <div className="coach-memory-evidence">
-                        {memory.evidence.slice(0, 2).map((line) => (
-                          <p key={line} className="muted">- {line}</p>
-                        ))}
-                      </div>
-                    </article>
-                  ))}
-                </>
-              ) : (
-                <p className="muted">Add a bit more transaction history and Coach Zero will start remembering your spending rhythm automatically.</p>
-              )}
-            </section>
-
-            <div className="home-section-head">
               <h3>Top numbers</h3>
               <p className="muted">Updated with every transaction</p>
             </div>
