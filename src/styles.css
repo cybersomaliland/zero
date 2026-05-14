@@ -69,7 +69,49 @@ button { touch-action: manipulation; }
   align-items: center;
   gap: 10px 14px;
 }
-.streak-wrap { display: flex; align-items: center; gap: 8px; }
+.streak-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.streak-wrap.streak-wrap--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.streak-wrap-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.streak-motivation-level {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 calc(30px + 8px);
+  line-height: 1.2;
+}
+.streak-motivation-level-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b45309;
+}
+.streak-motivation-level-num {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #9a3412;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme="dark"] .streak-motivation-level-kicker {
+  color: #fbbf24;
+}
+html[data-theme="dark"] .streak-motivation-level-num {
+  color: #fdba74;
+}
 .header-hargeisa-weather {
   display: flex;
   flex-direction: column;
@@ -1019,6 +1061,52 @@ html[data-theme="dark"] .bio-lock-screen {
   gap: 10px;
   padding: 2px 0 0;
   background: transparent;
+}
+.routine-ios .routine-day-hero {
+  margin: 0;
+  padding: 18px 16px 20px;
+  border-radius: 20px;
+  background: linear-gradient(165deg, #eaf3ff 0%, #dde9ff 42%, #f7f9ff 100%);
+  border: 1px solid #d4e2fc;
+  box-shadow: 0 8px 24px #15274a14, inset 0 1px 0 #ffffffa6;
+  display: grid;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+}
+.routine-ios .routine-day-hero-streak {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #3d4f6f;
+  line-height: 1.35;
+}
+.routine-ios .routine-day-hero-temp {
+  margin: 2px 0 0;
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+  color: #0b5cad;
+  font-variant-numeric: tabular-nums;
+}
+.routine-ios .routine-day-hero-condition {
+  margin: 4px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.3;
+}
+.routine-ios .routine-day-hero-date {
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.35;
+}
+.routine-ios .routine-day-hero-date time {
+  font-variant-numeric: tabular-nums;
 }
 .routine-ios .routine-card {
   border-radius: 18px;
@@ -2260,6 +2348,312 @@ html[data-theme="dark"] .bio-lock-screen {
   background: #ffffffd9;
   box-shadow: inset 0 0 0 1px #e6ecf8;
 }
+
+/* iOS-style live overview — routine first, money tucked under disclosure */
+.live-overview-card--ios {
+  padding: 0;
+  border-radius: 20px;
+  border: 0;
+  background: #f2f2f7;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 24px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+.live-overview-ios-shell {
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.live-overview-ios-eyebrow {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #6b7280;
+}
+.live-overview-ios-hero {
+  min-height: 0;
+}
+.live-overview-ios-hero-title {
+  margin: 0 0 4px;
+  font-size: clamp(22px, 5.5vw, 28px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+  color: #111827;
+}
+.live-overview-ios-hero-title--muted {
+  font-size: 20px;
+  font-weight: 600;
+  color: #6b7280;
+}
+.live-overview-ios-hero-meta {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: #6b7280;
+}
+.live-overview-ios-hero-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.live-overview-ios-pill-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #fff;
+  background: #007aff;
+  cursor: pointer;
+  font-family: inherit;
+}
+.live-overview-ios-pill-btn:active {
+  opacity: 0.85;
+}
+.live-overview-ios-pill-btn--compact {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+.live-overview-ios-group {
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 0 0 0.5px rgba(60, 60, 67, 0.18);
+}
+.live-overview-ios-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 0.5px solid rgba(60, 60, 67, 0.18);
+}
+.live-overview-ios-row:last-child {
+  border-bottom: 0;
+}
+.live-overview-ios-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.live-overview-ios-row-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #111827;
+}
+.live-overview-ios-row-detail {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: #6b7280;
+  line-height: 1.3;
+}
+.live-overview-ios-row-value {
+  flex-shrink: 0;
+  max-width: 46%;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  line-height: 1.35;
+}
+.live-overview-ios-row--tasks {
+  align-items: center;
+}
+.live-overview-ios-task-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.live-overview-ios-task-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: #111827;
+}
+.live-overview-ios-task-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-overview-ios-row-badge {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+.live-overview-ios-wallet {
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 0.5px rgba(60, 60, 67, 0.18);
+}
+.live-overview-ios-wallet-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.live-overview-ios-wallet-summary::-webkit-details-marker {
+  display: none;
+}
+.live-overview-ios-wallet-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #111827;
+}
+.live-overview-ios-wallet-preview {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  text-align: right;
+}
+.live-overview-ios-wallet-ping {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #c2410c;
+  background: #ffedd5;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.live-overview-ios-wallet-chevron {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border: solid #8e8e93;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  margin-left: 2px;
+}
+.live-overview-ios-wallet[open] .live-overview-ios-wallet-chevron {
+  transform: rotate(-135deg);
+  margin-top: 2px;
+}
+.live-overview-ios-wallet-body {
+  padding: 0 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 0.5px solid rgba(60, 60, 67, 0.12);
+}
+.live-overview-ios-snap-line {
+  margin: 0;
+  padding-top: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: -0.015em;
+  color: #111827;
+}
+.live-overview-ios-snap-line strong {
+  font-weight: 700;
+}
+.live-overview-ios-snap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.live-overview-ios-snap-cell {
+  background: #f9fafb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.25;
+  box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.1);
+}
+.live-overview-ios-snap-cell strong {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #111827;
+}
+.live-overview-ios-snap-alert {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: #fff7ed;
+  color: #9a3412;
+  box-shadow: inset 0 0 0 0.5px rgba(234, 88, 12, 0.35);
+}
+.live-overview-ios-wallet-bill {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #9a3412;
+  background: #fffbeb;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 0.5px rgba(234, 179, 8, 0.35);
+}
+.live-overview-ios-snap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding-top: 8px;
+}
+.live-overview-ios-snap-link {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #007aff;
+  cursor: pointer;
+  font-family: inherit;
+}
+.live-overview-ios-snap-link:active {
+  opacity: 0.65;
+}
+
 .coach-memory-card {
   display: grid;
   gap: 10px;
@@ -2313,6 +2707,59 @@ html[data-theme="dark"] .bio-lock-screen {
   background: linear-gradient(145deg, #fffdf8, #f4f7ff);
   border: 1px solid #ebe4d6;
   box-shadow: 0 12px 28px #2a1f0a10, inset 0 1px 0 #ffffffcc;
+}
+.motivation-fold {
+  border: 1px solid #ebe4d6;
+  background: linear-gradient(145deg, #fffdf8, #f4f7ff);
+  box-shadow: 0 12px 28px #2a1f0a10, inset 0 1px 0 #ffffffcc;
+  overflow: hidden;
+}
+.motivation-fold-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.motivation-fold-summary::-webkit-details-marker {
+  display: none;
+}
+.motivation-fold-summary-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.motivation-fold-summary-meta {
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.motivation-fold-chevron {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: solid #64748b;
+  border-width: 0 2px 2px 0;
+  padding: 2px;
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  box-sizing: border-box;
+}
+.motivation-fold[open] .motivation-fold-chevron {
+  transform: rotate(-135deg);
+  margin-top: 2px;
+}
+.motivation-fold-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+  border-top: 1px solid #ebe4d6;
 }
 .motivation-hero {
   display: flex;
@@ -2905,15 +3352,86 @@ html[data-theme="dark"] .live-overview-card {
   border-color: #2a2c33;
   box-shadow: 0 10px 26px #00000066, inset 0 1px 0 #ffffff0f;
 }
+html[data-theme="dark"] .live-overview-card--ios {
+  background: #1c1c1e;
+  border: 0;
+  box-shadow: 0 4px 28px rgba(0, 0, 0, 0.45);
+}
+html[data-theme="dark"] .live-overview-ios-eyebrow,
+html[data-theme="dark"] .live-overview-ios-hero-meta,
+html[data-theme="dark"] .live-overview-ios-row-detail,
+html[data-theme="dark"] .live-overview-ios-row-value,
+html[data-theme="dark"] .live-overview-ios-wallet-preview {
+  color: #98989d;
+}
+html[data-theme="dark"] .live-overview-ios-hero-title,
+html[data-theme="dark"] .live-overview-ios-row-label,
+html[data-theme="dark"] .live-overview-ios-task-line,
+html[data-theme="dark"] .live-overview-ios-wallet-title {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .live-overview-ios-hero-title--muted {
+  color: #8e8e93;
+}
+html[data-theme="dark"] .live-overview-ios-group,
+html[data-theme="dark"] .live-overview-ios-wallet {
+  background: #2c2c2e;
+  box-shadow: 0 0 0 0.5px #3a3a3c;
+}
+html[data-theme="dark"] .live-overview-ios-row {
+  border-bottom-color: #3a3a3c;
+}
+html[data-theme="dark"] .live-overview-ios-wallet-body {
+  border-top-color: #3a3a3c;
+}
+html[data-theme="dark"] .live-overview-ios-snap-cell {
+  background: #323232;
+  box-shadow: inset 0 0 0 0.5px #404040;
+}
+html[data-theme="dark"] .live-overview-ios-snap-cell strong,
+html[data-theme="dark"] .live-overview-ios-snap-line {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .live-overview-ios-snap-alert {
+  background: #3a2f1a;
+  color: #fcd34d;
+  box-shadow: inset 0 0 0 0.5px #854d0e;
+}
+html[data-theme="dark"] .live-overview-ios-wallet-ping {
+  background: #422006;
+  color: #fdba74;
+}
+html[data-theme="dark"] .live-overview-ios-wallet-bill {
+  background: #3a2f1a;
+  color: #fcd34d;
+  box-shadow: inset 0 0 0 0.5px #854d0e;
+}
+html[data-theme="dark"] .live-overview-ios-row-badge {
+  background: #3a3a3c;
+  color: #aeaeb2;
+}
+html[data-theme="dark"] .live-overview-ios-wallet-chevron {
+  border-color: #8e8e93;
+}
+html[data-theme="dark"] .live-overview-ios-snap-link {
+  color: #0a84ff;
+}
 html[data-theme="dark"] .coach-memory-card {
   background: linear-gradient(180deg, #1f2024f5, #191a1df0);
   border-color: #2a2c33;
   box-shadow: 0 10px 26px #00000066, inset 0 1px 0 #ffffff0f;
 }
-html[data-theme="dark"] .motivation-card {
+html[data-theme="dark"] .motivation-card,
+html[data-theme="dark"] .motivation-fold {
   background: linear-gradient(145deg, #1c1d21, #1a1b20);
   border-color: #3a3428;
   box-shadow: 0 12px 28px #00000055, inset 0 1px 0 #ffffff0a;
+}
+html[data-theme="dark"] .motivation-fold-body {
+  border-top-color: #3a3428;
+}
+html[data-theme="dark"] .motivation-fold-chevron {
+  border-color: #9ba3b8;
 }
 html[data-theme="dark"] .motivation-kicker {
   color: #fbbf24;
@@ -4728,6 +5246,23 @@ html[data-theme="dark"] .checklist-board-cat {
   color: var(--text-secondary) !important;
 }
 
+html[data-theme="dark"] .routine-ios .routine-day-hero {
+  background: linear-gradient(165deg, #1a2332 0%, #1c2430 50%, #222831 100%);
+  border-color: #354056;
+  box-shadow: 0 8px 24px #0000005c, inset 0 1px 0 #ffffff12;
+}
+html[data-theme="dark"] .routine-ios .routine-day-hero-streak {
+  color: #a8b8d4;
+}
+html[data-theme="dark"] .routine-ios .routine-day-hero-temp {
+  color: #5ac8fa;
+}
+html[data-theme="dark"] .routine-ios .routine-day-hero-condition {
+  color: var(--text-primary, #e8ecf4);
+}
+html[data-theme="dark"] .routine-ios .routine-day-hero-date {
+  color: #9aa5bb;
+}
 html[data-theme="dark"] .routine-ios .routine-card {
   background: linear-gradient(180deg, #1d1f24, #191b1f);
   border-color: #2a2f39;

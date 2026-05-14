@@ -443,7 +443,6 @@ function App() {
   const [monthlyRealDraft, setMonthlyRealDraft] = useState("");
   const [showAllowancePlanDetails, setShowAllowancePlanDetails] = useState(false);
   const [showAllowanceBillsDetails, setShowAllowanceBillsDetails] = useState(false);
-  const [savingPulseDone, setSavingPulseDone] = useState(false);
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
@@ -1815,7 +1814,7 @@ function App() {
     }
 
     if (coachMemoryHighlights[0]) {
-      bits.push(`coach memory: ${coachMemoryHighlights[0].summary.toLowerCase()}`);
+      bits.push(`spending pattern: ${coachMemoryHighlights[0].summary.toLowerCase()}`);
     }
 
     bits.push("Say what you want — I'll run changes when you ask.");
@@ -1878,73 +1877,148 @@ function App() {
           ? "due tomorrow"
           : "due soon")
       : "";
+    const nextSubtitle = nextTimelineBlock
+      ? `${nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`} · in ${nextTimelineBlockEtaMinutes} min`
+      : "Nothing else scheduled today";
     return (
-      <section className="card live-overview-card">
-        <div className="live-overview-head">
-          <p className="live-label">LIVE OVERVIEW</p>
-          <span className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</span>
-        </div>
-        <div className="live-overview-grid">
-          <article className="live-overview-tile">
-            <p className="live-label">NOW</p>
+      <section className="card live-overview-card live-overview-card--ios">
+        <div className="live-overview-ios-shell">
+          <p className="live-overview-ios-eyebrow">Right now</p>
+          <div className="live-overview-ios-hero">
             {currentTimelineBlock ? (
               <>
-                <h3>{currentTimelineBlock.title}</h3>
-                <p className="muted">{currentTimelineBlock.category.toUpperCase()} · ends in {currentTimelineBlock.minutesLeft} min</p>
-              </>
-            ) : (
-              <p className="muted">Nothing scheduled <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
-            )}
-          </article>
-          <article className="live-overview-tile">
-            <p className="live-label">NEXT</p>
-            {nextTimelineBlock ? (
-              <>
-                <h3>{nextTimelineBlock.title}</h3>
-                <p className="muted">
-                  {nextTimelineBlock.hour > 12 ? `${nextTimelineBlock.hour - 12}pm` : nextTimelineBlock.hour === 12 ? "12pm" : `${nextTimelineBlock.hour}am`} · in {nextTimelineBlockEtaMinutes} min
+                <h2 className="live-overview-ios-hero-title">{currentTimelineBlock.title}</h2>
+                <p className="live-overview-ios-hero-meta">
+                  {currentTimelineBlock.category.charAt(0).toUpperCase() + currentTimelineBlock.category.slice(1)}
+                  {" · "}
+                  {currentTimelineBlock.minutesLeft} min left
                 </p>
               </>
             ) : (
-              <p className="muted">Free for the rest of the day</p>
+              <div className="live-overview-ios-hero-empty">
+                <p className="live-overview-ios-hero-title live-overview-ios-hero-title--muted">Nothing on your timeline</p>
+                <button type="button" className="live-overview-ios-pill-btn" onClick={() => setTab("Insights")}>
+                  Plan your day
+                </button>
+              </div>
             )}
-          </article>
-          <article className="live-overview-tile">
-            <p className="live-label">TASKS</p>
-            {topOpenTasks.length > 0 ? (
-              <>
-                {topOpenTasks.map((task) => (
-                  <p key={task.id} className="live-task-line">
-                    <span>{task.title}</span>
-                    <span className={`priority-dot ${task.priority}`} />
-                  </p>
-                ))}
-                {openTasksSorted.length > 2 && <p className="muted">{openTasksSorted.length - 2} more tasks</p>}
-              </>
-            ) : (
-              <p className="muted">Nothing on your list <button type="button" className="inline-link" onClick={() => setTab("Insights")}>+ Add</button></p>
-            )}
-          </article>
-          <article className="live-overview-tile live-overview-money">
-            <p className="live-label">MONEY</p>
-            <h3>{money(todayRemaining)} left today</h3>
-            <p className={`live-money-status ${todayRemaining < 0 ? "over" : "track"}`}>{todayRemaining < 0 ? "Over budget" : "On track"}</p>
-          </article>
-        </div>
-        <div className="live-overview-foot">
-          {savePlan.savePerDay > 0 && (
-            <button type="button" className="savings-pulse-row live-overview-action" onClick={() => setSavingPulseDone((v) => !v)}>
-              <span className="live-label">SAVINGS PULSE</span>
-              <span>Save {money(savePlan.savePerDay)} today</span>
-              <span className={`pulse-toggle ${savingPulseDone ? "done" : ""}`}>{savingPulseDone ? "✓" : ""}</span>
-            </button>
-          )}
-          {next48HourBill && (
-            <button type="button" className="bill-alert-row live-overview-action" onClick={() => setTab("Subscriptions")}>
-              <span className="live-label">BILLS</span>
-              <span>⚠ {next48HourBill.name} {warningLabel}</span>
-            </button>
-          )}
+          </div>
+
+          <div className="live-overview-ios-group" aria-label="Up next and tasks">
+            <div className="live-overview-ios-row">
+              <div className="live-overview-ios-row-text">
+                <span className="live-overview-ios-row-label">Next</span>
+                <span className="live-overview-ios-row-detail">
+                  {nextTimelineBlock ? nextTimelineBlock.title : "Open time"}
+                </span>
+              </div>
+              <span className="live-overview-ios-row-value">{nextSubtitle}</span>
+            </div>
+            <div className="live-overview-ios-row live-overview-ios-row--tasks">
+              <div className="live-overview-ios-row-text">
+                <span className="live-overview-ios-row-label">Tasks</span>
+                {topOpenTasks.length > 0 ? (
+                  <ul className="live-overview-ios-task-list">
+                    {topOpenTasks.map((task) => (
+                      <li key={task.id} className="live-overview-ios-task-line">
+                        <span className="live-overview-ios-task-title">{task.title}</span>
+                        <span className={`priority-dot ${task.priority}`} aria-hidden />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="live-overview-ios-row-detail">Nothing on your list</span>
+                )}
+              </div>
+              {topOpenTasks.length === 0 ? (
+                <button type="button" className="live-overview-ios-pill-btn live-overview-ios-pill-btn--compact" onClick={() => setTab("Insights")}>
+                  Add
+                </button>
+              ) : openTasksSorted.length > 2 ? (
+                <span className="live-overview-ios-row-badge">+{openTasksSorted.length - 2}</span>
+              ) : null}
+            </div>
+          </div>
+
+          <details className="live-overview-ios-wallet">
+            <summary className="live-overview-ios-wallet-summary">
+              <span className="live-overview-ios-wallet-title">Today snapshot</span>
+              <span className="live-overview-ios-wallet-preview">
+                {routineAdherenceInsight.last7Avg != null
+                  ? `${routineAdherenceInsight.last7Avg}% · ${routineAdherenceInsight.last7DaysWithData}d`
+                  : `${checklistProgressPct}% checklist`}
+                {streakAtRisk ? (
+                  <span className="live-overview-ios-wallet-ping">Save streak</span>
+                ) : null}
+              </span>
+              <span className="live-overview-ios-wallet-chevron" aria-hidden />
+            </summary>
+            <div className="live-overview-ios-wallet-body">
+              {routineAdherenceInsight.last7Avg != null ? (
+                <p className="live-overview-ios-snap-line">
+                  <span className="muted">7-day routine adherence</span>
+                  <strong>{routineAdherenceInsight.last7Avg}%</strong>
+                  <span className="muted"> · {routineAdherenceInsight.last7DaysWithData} scored day{routineAdherenceInsight.last7DaysWithData === 1 ? "" : "s"}</span>
+                </p>
+              ) : (
+                <p className="live-overview-ios-snap-line muted">
+                  Adherence score appears after a few days with timeline, checklist, or planned meals.
+                </p>
+              )}
+              <div className="live-overview-ios-snap-grid">
+                <div className="live-overview-ios-snap-cell">
+                  <span className="muted">Today · Template</span>
+                  <strong>{routineAdherenceInsight.todayTimeline != null ? `${routineAdherenceInsight.todayTimeline}%` : "—"}</strong>
+                </div>
+                <div className="live-overview-ios-snap-cell">
+                  <span className="muted">Tasks</span>
+                  <strong>{routineAdherenceInsight.todayTasks != null ? `${routineAdherenceInsight.todayTasks}%` : "—"}</strong>
+                </div>
+                <div className="live-overview-ios-snap-cell">
+                  <span className="muted">Meals</span>
+                  <strong>{routineAdherenceInsight.todayMeals != null ? `${routineAdherenceInsight.todayMeals}%` : "—"}</strong>
+                </div>
+                <div className="live-overview-ios-snap-cell">
+                  <span className="muted">Blend</span>
+                  <strong>{routineAdherenceInsight.todayCombined != null ? `${routineAdherenceInsight.todayCombined}%` : "—"}</strong>
+                </div>
+              </div>
+              <p className="live-overview-ios-snap-line">
+                <span className="muted">Checklist</span>
+                <strong>{doneChecklistTasks.length}/{tasks.length || 0}</strong>
+                <span className="muted"> done</span>
+              </p>
+              <p className="live-overview-ios-snap-line">
+                <span className="muted">Meals logged</span>
+                <strong>{mealStats.completed}/{mealStats.planned || 0}</strong>
+                <span className="muted"> done</span>
+              </p>
+              {streakAtRisk ? (
+                <p className="live-overview-ios-snap-alert" role="status">
+                  Streak: <strong>{streakCarryDays}-day</strong> run needs today&apos;s touch before midnight — log activity on the Routine tab or add a transaction.
+                </p>
+              ) : (
+                <p className="live-overview-ios-snap-line">
+                  <span className="muted">Activity streak</span>
+                  <strong>{streakDays} day{streakDays === 1 ? "" : "s"}</strong>
+                </p>
+              )}
+              {next48HourBill && (
+                <button type="button" className="live-overview-ios-wallet-bill" onClick={() => setTab("Subscriptions")}>
+                  <span className="muted">Bill</span>
+                  <span>⚠ {next48HourBill.name} · {warningLabel}</span>
+                </button>
+              )}
+              <div className="live-overview-ios-snap-actions">
+                <button type="button" className="live-overview-ios-snap-link" onClick={() => setTab("Insights")}>
+                  Open Routine
+                </button>
+                <button type="button" className="live-overview-ios-snap-link" onClick={() => setTab("Transactions")}>
+                  Log spending
+                </button>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
     );
@@ -1954,9 +2028,15 @@ function App() {
     nextTimelineBlockEtaMinutes,
     topOpenTasks,
     openTasksSorted.length,
-    todayRemaining,
-    savePlan.savePerDay,
-    savingPulseDone,
+    routineAdherenceInsight,
+    checklistProgressPct,
+    doneChecklistTasks.length,
+    tasks.length,
+    mealStats.completed,
+    mealStats.planned,
+    streakDays,
+    streakAtRisk,
+    streakCarryDays,
     next48HourBill,
   ]);
   const morningCoachBriefing = useMemo(() => {
@@ -1976,8 +2056,8 @@ function App() {
       ? "Somaliland updates are already moving this morning — stay informed, but keep your focus tight."
       : "Somaliland morning energy is calm right now — perfect time to make your first strong move.";
     const memoryLine = coachMemoryHighlights[0]
-      ? `Coach memory: ${coachMemoryHighlights[0].summary}`
-      : "Coach memory is still learning from your transaction history.";
+      ? `Spending pattern: ${coachMemoryHighlights[0].summary}`
+      : "We're still learning your spending pattern from your transaction history.";
     const nudge = tasks.length === 0
       ? "One move: write one priority before 9am and finish it first."
       : "One move: finish your top task before you check socials again.";
@@ -3021,24 +3101,30 @@ function App() {
       <header className="top">
         <div>
           <div className="streak-weather-row">
-            <div className="streak-wrap">
-              <motion.span
-                className="streak-icon"
-                style={streakIconSurfaceStyle}
-                animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
-                transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-                aria-hidden="true"
-              >
-                <IosIcon name="streak" />
-              </motion.span>
-              <motion.h1
-                key={streakDays}
-                initial={{ opacity: 0.4, y: 6, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ type: "spring", stiffness: 250, damping: 16 }}
-              >
-                {streakDays} day{streakDays === 1 ? "" : "s"}
-              </motion.h1>
+            <div className="streak-wrap streak-wrap--stacked">
+              <div className="streak-wrap-top">
+                <motion.span
+                  className="streak-icon"
+                  style={streakIconSurfaceStyle}
+                  animate={{ y: [0, -2, 0], scale: [1, 1.08, 1] }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                  aria-hidden="true"
+                >
+                  <IosIcon name="streak" />
+                </motion.span>
+                <motion.h1
+                  key={streakDays}
+                  initial={{ opacity: 0.4, y: 6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 250, damping: 16 }}
+                >
+                  {streakDays} day{streakDays === 1 ? "" : "s"}
+                </motion.h1>
+              </div>
+              <p className="streak-motivation-level" aria-label={`Motivation level ${motivationView.level}`}>
+                <span className="streak-motivation-level-kicker">Level</span>
+                <span className="streak-motivation-level-num">{motivationView.level}</span>
+              </p>
             </div>
             <div
               className="header-hargeisa-weather"
@@ -3231,89 +3317,8 @@ function App() {
             </section>
 
             <div className="home-section-head">
-              <h3 id="motivation-section-title">Motivation</h3>
-              <p className="muted">XP, levels, badges, and weekly wins from your money + routine rhythm</p>
-            </div>
-            <section className="card motivation-card" aria-labelledby="motivation-section-title">
-              <div className="motivation-hero">
-                <div>
-                  <p className="motivation-kicker">Level {motivationView.level}</p>
-                  <p className="motivation-xp-total">
-                    <strong>{motivationView.totalXp.toLocaleString()}</strong>
-                    <span className="muted"> total XP</span>
-                  </p>
-                </div>
-                <div className="motivation-level-next">
-                  <p className="muted motivation-level-next-label">
-                    {motivationView.xpIntoLevel} / {motivationView.xpForNextLevel} XP to level {motivationView.level + 1}
-                  </p>
-                  <div
-                    className="motivation-level-bar"
-                    role="progressbar"
-                    aria-valuenow={motivationView.xpIntoLevel}
-                    aria-valuemin={0}
-                    aria-valuemax={motivationView.xpForNextLevel}
-                  >
-                    <div
-                      className="motivation-level-bar-fill"
-                      style={{
-                        width: `${Math.min(100, Math.round((100 * motivationView.xpIntoLevel) / Math.max(1, motivationView.xpForNextLevel)))}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <details className="motivation-details">
-                <summary>How XP adds up</summary>
-                <ul className="motivation-xp-list">
-                  {motivationView.xpBreakdown.map((row) => (
-                    <li key={row.label}>
-                      <span>{row.label}</span>
-                      <span className="motivation-xp-amt">+{row.amount}</span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-
-              <div className="motivation-subhead">Achievement badges</div>
-              <ul className="motivation-badge-grid">
-                {motivationView.badges.map((b) => (
-                  <li
-                    key={b.id}
-                    className={`motivation-badge${b.unlocked ? " motivation-badge--on" : ""}`}
-                    title={b.description}
-                  >
-                    <span className="motivation-badge-title">{b.title}</span>
-                    <span className="muted motivation-badge-desc">{b.description}</span>
-                  </li>
-                ))}
-              </ul>
-
-              <div className="motivation-subhead">Weekly wins</div>
-              <ul className="motivation-wins-list">
-                {motivationView.weeklyWins.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-
-              <div className="motivation-subhead">Routine milestones</div>
-              <ul className="motivation-milestones">
-                {motivationView.routineMilestones.map((m) => (
-                  <li key={m.id} className={m.done ? "motivation-milestone motivation-milestone--done" : "motivation-milestone"}>
-                    <span className="motivation-milestone-check" aria-hidden>{m.done ? "✓" : "○"}</span>
-                    <div>
-                      <strong>{m.title}</strong>
-                      <p className="muted motivation-milestone-detail">{m.detail}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-
-            <div className="home-section-head">
-              <h3>Coach memory</h3>
-              <p className="muted">Learns your real money habits</p>
+              <h3>Spending patterns</h3>
+              <p className="muted">Inferred from your transactions</p>
             </div>
             <section className="card coach-memory-card">
               {coachMemoryHighlights.length > 0 ? (
@@ -3820,6 +3825,78 @@ function App() {
                 })}
               </div>
             </section>
+
+            <details className="card motivation-fold">
+              <summary className="motivation-fold-summary">
+                <span className="motivation-fold-summary-title">Motivation details</span>
+                <span className="muted motivation-fold-summary-meta">
+                  {motivationView.totalXp.toLocaleString()} XP · Lv {motivationView.level}
+                </span>
+                <span className="motivation-fold-chevron" aria-hidden />
+              </summary>
+              <div className="motivation-fold-body">
+                <div className="motivation-hero">
+                  <div>
+                    <p className="motivation-kicker">Level {motivationView.level}</p>
+                    <p className="motivation-xp-total">
+                      <strong>{motivationView.totalXp.toLocaleString()}</strong>
+                      <span className="muted"> total XP</span>
+                    </p>
+                  </div>
+                  <div className="motivation-level-next">
+                    <p className="muted motivation-level-next-label">
+                      {motivationView.xpIntoLevel} / {motivationView.xpForNextLevel} XP to level {motivationView.level + 1}
+                    </p>
+                    <div
+                      className="motivation-level-bar"
+                      role="progressbar"
+                      aria-valuenow={motivationView.xpIntoLevel}
+                      aria-valuemin={0}
+                      aria-valuemax={motivationView.xpForNextLevel}
+                    >
+                      <div
+                        className="motivation-level-bar-fill"
+                        style={{
+                          width: `${Math.min(100, Math.round((100 * motivationView.xpIntoLevel) / Math.max(1, motivationView.xpForNextLevel)))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <details className="motivation-details">
+                  <summary>How XP adds up</summary>
+                  <ul className="motivation-xp-list">
+                    {motivationView.xpBreakdown.map((row) => (
+                      <li key={row.label}>
+                        <span>{row.label}</span>
+                        <span className="motivation-xp-amt">+{row.amount}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+
+                <div className="motivation-subhead">Weekly wins</div>
+                <ul className="motivation-wins-list">
+                  {motivationView.weeklyWins.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+
+                <div className="motivation-subhead">Routine milestones</div>
+                <ul className="motivation-milestones">
+                  {motivationView.routineMilestones.map((m) => (
+                    <li key={m.id} className={m.done ? "motivation-milestone motivation-milestone--done" : "motivation-milestone"}>
+                      <span className="motivation-milestone-check" aria-hidden>{m.done ? "✓" : "○"}</span>
+                      <div>
+                        <strong>{m.title}</strong>
+                        <p className="muted motivation-milestone-detail">{m.detail}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
           </div>
         )}
 
@@ -3891,6 +3968,24 @@ function App() {
 
         {tab === "Insights" && (
           <div className="routine-layout routine-ios">
+            <section className="routine-day-hero" aria-label="Today at a glance">
+              <p className="routine-day-hero-streak">
+                {streakDays} day{streakDays === 1 ? "" : "s"}
+              </p>
+              <p className="routine-day-hero-temp" aria-live="polite">
+                {weatherBrief ? `${Math.round(weatherBrief.currentTempC)}°` : "—"}
+              </p>
+              <p className="routine-day-hero-condition" aria-live="polite">
+                {weatherBrief?.currentSummary?.trim()
+                  ? weatherBrief.currentSummary.trim()
+                  : weatherLoading
+                    ? "Loading…"
+                    : weatherError || "Weather unavailable"}
+              </p>
+              <p className="routine-day-hero-date">
+                <time dateTime={todayIso}>{format(liveNow, "EEEE, MMM d")}</time>
+              </p>
+            </section>
             <section className="card routine-card routine-card-now">
               <p className="routine-section-kicker">RIGHT NOW</p>
               {currentTimelineBlock ? (

@@ -909,7 +909,7 @@ export function askFinanceAssistant(
   }
   if (q.includes("wasting") || q.includes("waste")) {
     if (!top) return "I need more expense data before I can detect waste patterns.";
-    const memoryHint = coachMemories[0] ? ` Coach memory: ${coachMemories[0].summary}` : "";
+    const memoryHint = coachMemories[0] ? ` Spending pattern: ${coachMemories[0].summary}` : "";
     return `Your main leak is ${top[0]} at ${money(top[1])}.${memoryHint} Start there before trying to fix everything at once.`;
   }
   if (q.includes("food")) {
